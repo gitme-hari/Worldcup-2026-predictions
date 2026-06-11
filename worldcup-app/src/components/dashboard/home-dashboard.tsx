@@ -9,16 +9,18 @@ import { Badge } from '@/components/ui/badge'
 import { Calendar, Zap, RefreshCw, AlertCircle, ChevronRight } from 'lucide-react'
 
 const TEAM_NAMES: Record<string, string> = {
-  usa:'United States',uru:'Uruguay',pan:'Panama',bol:'Bolivia',arg:'Argentina',
-  chi:'Chile',per:'Peru',pol:'Poland',bra:'Brazil',col:'Colombia',ecu:'Ecuador',
-  par:'Paraguay',fra:'France',bel:'Belgium',tun:'Tunisia',mar:'Morocco',
-  ger:'Germany',esp:'Spain',den:'Denmark',tur:'Turkey',eng:'England',
-  ned:'Netherlands',irn:'Iran',wal:'Wales',por:'Portugal',cro:'Croatia',
-  ksa:'Saudi Arabia',aus:'Australia',ita:'Italy',sui:'Switzerland',nga:'Nigeria',
-  kor:'South Korea',jpn:'Japan',sen:'Senegal',cmr:'Cameroon',nzl:'New Zealand',
-  mex:'Mexico',can:'Canada',crc:'Costa Rica',ukr:'Ukraine',egy:'Egypt',
-  civ:"Côte d'Ivoire",alg:'Algeria',rsa:'South Africa',svk:'Slovakia',
-  aut:'Austria',rom:'Romania',mli:'Mali',
+  mex:'Mexico',rsa:'South Africa',kor:'Korea Republic',cze:'Czechia',
+  can:'Canada',bih:'Bosnia and Herzegovina',qat:'Qatar',sui:'Switzerland',
+  bra:'Brazil',mar:'Morocco',hai:'Haiti',sco:'Scotland',
+  usa:'United States',par:'Paraguay',aus:'Australia',tur:'Türkiye',
+  ger:'Germany',cur:'Curaçao',civ:"Côte d'Ivoire",ecu:'Ecuador',
+  ned:'Netherlands',jpn:'Japan',swe:'Sweden',tun:'Tunisia',
+  bel:'Belgium',egy:'Egypt',irn:'IR Iran',nzl:'New Zealand',
+  esp:'Spain',cpv:'Cabo Verde',ksa:'Saudi Arabia',uru:'Uruguay',
+  fra:'France',sen:'Senegal',irq:'Iraq',nor:'Norway',
+  arg:'Argentina',alg:'Algeria',aut:'Austria',jor:'Jordan',
+  por:'Portugal',cod:'Congo DR',uzb:'Uzbekistan',col:'Colombia',
+  eng:'England',cro:'Croatia',gha:'Ghana',pan:'Panama',
 }
 
 function ActiveModelCard() {
