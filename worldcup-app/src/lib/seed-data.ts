@@ -22,7 +22,7 @@ export const SEED_TEAMS: SeedTeam[] = [
   { id: 'sui', name: 'Switzerland',   code: 'SUI', group: 'B', flag_url: '🇨🇭', elo_rating: 1840 },
   // Group C
   { id: 'bra', name: 'Brazil',        code: 'BRA', group: 'C', flag_url: '🇧🇷', elo_rating: 2020 },
-  { id: 'mar', name: 'Morocco',       code: 'MAR', group: 'C', flag_url: '🇲🇦', elo_rating: 1810 },
+  { id: 'mar', name: 'Morocco',       code: 'MAR', group: 'C', flag_url: '🇲🇦', elo_rating: 1860 },
   { id: 'hai', name: 'Haiti',         code: 'HAI', group: 'C', flag_url: '🇭🇹', elo_rating: 1480 },
   { id: 'sco', name: 'Scotland',      code: 'SCO', group: 'C', flag_url: '🏴󠁧󠁢󠁳󠁣󠁴󠁿', elo_rating: 1690 },
   // Group D
@@ -54,7 +54,7 @@ export const SEED_TEAMS: SeedTeam[] = [
   { id: 'fra', name: 'France',        code: 'FRA', group: 'I', flag_url: '🇫🇷', elo_rating: 2010 },
   { id: 'sen', name: 'Senegal',       code: 'SEN', group: 'I', flag_url: '🇸🇳', elo_rating: 1760 },
   { id: 'irq', name: 'Iraq',          code: 'IRQ', group: 'I', flag_url: '🇮🇶', elo_rating: 1530 },
-  { id: 'nor', name: 'Norway',        code: 'NOR', group: 'I', flag_url: '🇳🇴', elo_rating: 1790 },
+  { id: 'nor', name: 'Norway',        code: 'NOR', group: 'I', flag_url: '🇳🇴', elo_rating: 1810 },
   // Group J
   { id: 'arg', name: 'Argentina',     code: 'ARG', group: 'J', flag_url: '🇦🇷', elo_rating: 2050 },
   { id: 'alg', name: 'Algeria',       code: 'ALG', group: 'J', flag_url: '🇩🇿', elo_rating: 1650 },
@@ -64,7 +64,7 @@ export const SEED_TEAMS: SeedTeam[] = [
   { id: 'por', name: 'Portugal',      code: 'POR', group: 'K', flag_url: '🇵🇹', elo_rating: 1970 },
   { id: 'cod', name: 'Congo DR',      code: 'COD', group: 'K', flag_url: '🇨🇩', elo_rating: 1560 },
   { id: 'uzb', name: 'Uzbekistan',    code: 'UZB', group: 'K', flag_url: '🇺🇿', elo_rating: 1530 },
-  { id: 'col', name: 'Colombia',      code: 'COL', group: 'K', flag_url: '🇨🇴', elo_rating: 1750 },
+  { id: 'col', name: 'Colombia',      code: 'COL', group: 'K', flag_url: '🇨🇴', elo_rating: 1780 },
   // Group L
   { id: 'eng', name: 'England',       code: 'ENG', group: 'L', flag_url: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', elo_rating: 1970 },
   { id: 'cro', name: 'Croatia',       code: 'CRO', group: 'L', flag_url: '🇭🇷', elo_rating: 1830 },
@@ -142,13 +142,14 @@ const MODEL_C_DEFENSE_BIAS: Record<string, number> = {
   eng: 0.94, bel: 0.92, ned: 0.95,
 }
 
-function poissonGoals(eloHome: number, eloAway: number, homeAdv = 0.1) {
-  const diff = (eloHome - eloAway) / 400
-  const base = 1.35
-  return {
-    homeLambda: base * Math.pow(10, diff + homeAdv),
-    awayLambda: base * Math.pow(10, -diff),
-  }
+function poissonGoals(eloHome: number, eloAway: number, homeAdv = 0.15) {
+  // Exponential-linear model: realistic WC scores, no blow-outs from Elo gaps
+  const K = 0.0025
+  const BASE = 1.25
+  const diff = eloHome - eloAway
+  const homeLambda = Math.min(Math.max(BASE * Math.exp(K * diff) + homeAdv, 0.3), 3.5)
+  const awayLambda = Math.min(Math.max(BASE * Math.exp(-K * diff), 0.3), 3.5)
+  return { homeLambda, awayLambda }
 }
 
 function poissonProb(lambda: number, k: number): number {
@@ -212,7 +213,7 @@ export function generatePredictions(): SeedPrediction[] {
     const { homeLambda: hlB, awayLambda: alB } = poissonGoals(
       home.elo_rating * (1 + hBias),
       away.elo_rating * (1 + aBias),
-      0.09
+      0.12
     )
     const pB = calcOutcomeProbs(hlB, alB)
     predictions.push({
@@ -230,7 +231,7 @@ export function generatePredictions(): SeedPrediction[] {
     const aAtk = MODEL_C_ATTACK_BIAS[away.id] ?? 1.0
     const hDef = MODEL_C_DEFENSE_BIAS[home.id] ?? 1.0
     const { homeLambda: hlCraw, awayLambda: alCraw } = poissonGoals(
-      home.elo_rating, away.elo_rating, 0.07
+      home.elo_rating, away.elo_rating, 0.10
     )
     const hlC = Math.max(0.3, hlCraw * hAtk * (2 - aDef))
     const alC = Math.max(0.3, alCraw * aAtk * (2 - hDef))
