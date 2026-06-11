@@ -70,8 +70,8 @@ function ResultRow({
     (locked?.model as ModelKey) ?? config.active_model
   )
   const [isLocked, setIsLocked] = useState(!!locked)
-  const [homeActual, setHomeActual] = useState(String(existing?.home_goals ?? ''))
-  const [awayActual, setAwayActual] = useState(String(existing?.away_goals ?? ''))
+  const [homeActual, setHomeActual] = useState(String(existing?.home_goals ?? '0'))
+  const [awayActual, setAwayActual] = useState(String(existing?.away_goals ?? '0'))
   const [showConfirm, setShowConfirm] = useState(false)
   const [savedResult, setSavedResult] = useState<{ home: number; away: number } | null>(
     existing ? { home: existing.home_goals, away: existing.away_goals } : null
@@ -138,8 +138,8 @@ function ResultRow({
     deleteLockedPrediction(fixture.id)
     setIsLocked(false)
     setSavedResult(null)
-    setHomeActual('')
-    setAwayActual('')
+    setHomeActual('0')
+    setAwayActual('0')
   }
 
   const isSaved = !!savedResult
