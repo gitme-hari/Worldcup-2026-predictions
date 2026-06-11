@@ -20,7 +20,7 @@ export function pct(p: number) {
 }
 
 export function goals(g: number) {
-  return g.toFixed(1)
+  return String(Math.round(g))
 }
 
 export const MODEL_LABELS: Record<string, string> = {
