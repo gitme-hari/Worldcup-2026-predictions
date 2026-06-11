@@ -14,6 +14,7 @@ const KEYS = {
   bonus: 'wc26_bonus',
   bracketOverrides: 'wc26_bracket_overrides',
   liveData: 'wc26_live_data',
+  lockedPreds: 'wc26_locked_preds',
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -267,6 +268,39 @@ export function computeMetrics(): ComputedMetrics[] {
       totalGoalsMAE: count > 0 ? (homeMAESum + awayMAESum) / count : 0,
     }
   })
+}
+
+// --- Locked Predictions (per-match model selection, saved before kickoff) ---
+export interface LockedPrediction {
+  fixture_id: string
+  model: string
+  home_goals: number
+  away_goals: number
+  home_win_prob: number
+  draw_prob: number
+  away_win_prob: number
+  locked_at: string
+}
+
+export function getLockedPredictions(): LockedPrediction[] {
+  return load<LockedPrediction[]>(KEYS.lockedPreds, [])
+}
+
+export function getLockedPrediction(fixtureId: string): LockedPrediction | undefined {
+  return getLockedPredictions().find(p => p.fixture_id === fixtureId)
+}
+
+export function saveLockPrediction(pred: Omit<LockedPrediction, 'locked_at'>) {
+  const preds = getLockedPredictions()
+  const idx = preds.findIndex(p => p.fixture_id === pred.fixture_id)
+  const full: LockedPrediction = { ...pred, locked_at: new Date().toISOString() }
+  if (idx >= 0) preds[idx] = full
+  else preds.push(full)
+  save(KEYS.lockedPreds, preds)
+}
+
+export function deleteLockedPrediction(fixtureId: string) {
+  save(KEYS.lockedPreds, getLockedPredictions().filter(p => p.fixture_id !== fixtureId))
 }
 
 export function getBestModel(): 'A' | 'B' | 'C' | null {
