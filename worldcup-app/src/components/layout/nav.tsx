@@ -2,17 +2,14 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, ListOrdered, Users, GitBranch, Star, Trophy, BarChart2, Settings, FlaskConical } from 'lucide-react'
+import { LayoutDashboard, ListOrdered, Users, GitBranch, FlaskConical, Settings } from 'lucide-react'
 
 const NAV = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/matches', label: 'Matches', icon: ListOrdered },
   { href: '/groups', label: 'Groups', icon: Users },
   { href: '/bracket', label: 'Bracket', icon: GitBranch },
-  { href: '/bonus', label: 'Bonus', icon: Star },
-  { href: '/results', label: 'Results', icon: Trophy },
   { href: '/analysis', label: 'Analysis', icon: FlaskConical },
-  { href: '/metrics', label: 'Metrics', icon: BarChart2 },
   { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
