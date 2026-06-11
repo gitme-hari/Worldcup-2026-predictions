@@ -1,261 +1,12 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { getConfig, getTeams, getFixtures, getPredictions, getResults, getResult, getBestModel, computeMetrics, getBonusPredictions, fetchLiveData, getLiveData } from '@/lib/store'
-import { computeGroupStandings, getEffectivePrediction } from '@/lib/models'
-import { MODEL_LABELS, MODEL_COLORS, formatDate, formatTime, pct, goals } from '@/lib/utils'
-import type { ModelConfig } from '@/lib/types'
+import { getConfig, getTeams, getFixtures, getPredictions, getResult, fetchLiveData, getLiveData } from '@/lib/store'
+import { getEffectivePrediction } from '@/lib/models'
+import { MODEL_LABELS, MODEL_COLORS, formatTime, pct, goals } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Trophy, TrendingUp, Calendar, Star, ChevronRight, Target, Zap, RefreshCw, AlertCircle } from 'lucide-react'
-
-function TodayMatches() {
-  const fixtures = getFixtures()
-  const teams = getTeams()
-  const predictions = getPredictions()
-  const config = getConfig()
-  const results = getResults()
-
-  const today = new Date()
-  const todayStr = today.toISOString().split('T')[0]
-  const upcomingDays = 3
-
-  const upcoming = fixtures
-    .filter(f => {
-      const d = new Date(f.kickoff_utc)
-      const diffDays = Math.floor((d.getTime() - today.getTime()) / 86400000)
-      return diffDays >= -1 && diffDays <= upcomingDays
-    })
-    .sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
-    .slice(0, 8)
-
-  const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" />Upcoming Matches</CardTitle>
-        <Link href="/matches" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">All <ChevronRight className="h-3 w-3" /></Link>
-      </CardHeader>
-      <CardContent className="p-0">
-        {upcoming.length === 0 ? (
-          <p className="px-4 py-3 text-xs text-zinc-400">No upcoming matches</p>
-        ) : upcoming.map(f => {
-          const home = teamMap[f.home_team_id]
-          const away = teamMap[f.away_team_id]
-          const pred = getEffectivePrediction(predictions as any, f.id, config.active_model, {
-            a: config.weight_a, b: config.weight_b, c: config.weight_c
-          })
-          const result = getResult(f.id)
-          const matchDate = new Date(f.kickoff_utc)
-          const isToday = matchDate.toISOString().split('T')[0] === todayStr
-
-          return (
-            <Link key={f.id} href={`/matches/${f.id}`} className="block border-b border-zinc-50 last:border-0 hover:bg-zinc-50">
-              <div className="px-4 py-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="text-base">{home?.flag_url}</span>
-                    <span className="text-xs font-medium text-zinc-900 truncate">{home?.code}</span>
-                    {result ? (
-                      <span className="text-xs font-bold text-zinc-900 mx-1">{result.home_goals}–{result.away_goals}</span>
-                    ) : pred ? (
-                      <span className="text-xs text-zinc-400 mx-1">{goals(pred.home_goals)}–{goals(pred.away_goals)}</span>
-                    ) : null}
-                    <span className="text-xs font-medium text-zinc-900 truncate">{away?.code}</span>
-                    <span className="text-base">{away?.flag_url}</span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {isToday && <Badge variant="warning">Today</Badge>}
-                    {result && <Badge variant="success">Final</Badge>}
-                    <span className="text-xs text-zinc-400">{f.group ? `Grp ${f.group}` : f.stage.toUpperCase()}</span>
-                    <span className="text-xs text-zinc-400">{formatTime(f.kickoff_utc)}</span>
-                  </div>
-                </div>
-                {pred && !result && (
-                  <div className="mt-1 flex items-center gap-2">
-                    <div className="h-1.5 flex-1 rounded-full overflow-hidden bg-zinc-100 flex">
-                      <div className="h-full bg-blue-500 rounded-l-full" style={{ width: `${pred.home_win_prob * 100}%` }} />
-                      <div className="h-full bg-zinc-300" style={{ width: `${pred.draw_prob * 100}%` }} />
-                      <div className="h-full bg-red-400 rounded-r-full" style={{ width: `${pred.away_win_prob * 100}%` }} />
-                    </div>
-                    <span className="text-xs text-zinc-400 shrink-0">
-                      {pct(pred.home_win_prob)} / {pct(pred.draw_prob)} / {pct(pred.away_win_prob)}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </Link>
-          )
-        })}
-      </CardContent>
-    </Card>
-  )
-}
-
-function TopPredictions() {
-  const teams = getTeams()
-  const fixtures = getFixtures()
-  const predictions = getPredictions()
-  const config = getConfig()
-  const bonus = getBonusPredictions()
-  const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
-
-  const getScore = (fid: string) => {
-    const pred = getEffectivePrediction(predictions as any, fid, config.active_model, {
-      a: config.weight_a, b: config.weight_b, c: config.weight_c
-    })
-    if (!pred) return null
-    return { home: Math.round(pred.home_goals), away: Math.round(pred.away_goals) }
-  }
-
-  const standings = computeGroupStandings(fixtures as any, teams, getScore)
-
-  const groupWinners = 'ABCDEFGHIJKL'.split('').map(g => ({
-    group: g,
-    team: standings[g]?.[0]?.team,
-  }))
-
-  const champion = bonus.find(b => b.key === 'champion')?.team_id
-  const champTeam = champion ? teamMap[champion] : groupWinners[0]?.team
-
-  const sfTeams = ['sf1','sf2','sf3','sf4'].map(k => {
-    const id = bonus.find(b => b.key === k)?.team_id
-    return id ? teamMap[id] : null
-  }).filter(Boolean)
-
-  const topScorerTeam = bonus.find(b => b.key === 'top_scorer_team')?.team_id
-  const topScorerTeamData = topScorerTeam ? teamMap[topScorerTeam] : null
-
-  return (
-    <div className="space-y-3">
-      {champTeam && (
-        <Card>
-          <CardContent className="flex items-center gap-2 py-2.5">
-            <Trophy className="h-4 w-4 text-yellow-500 shrink-0" />
-            <span className="text-xs font-medium text-zinc-500">Predicted Champion</span>
-            <span className="ml-auto flex items-center gap-1.5 text-sm font-bold text-zinc-900">
-              <span>{champTeam.flag_url}</span> {champTeam.name}
-            </span>
-          </CardContent>
-        </Card>
-      )}
-
-      {sfTeams.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle>Predicted Semi-Finalists</CardTitle></CardHeader>
-          <CardContent className="flex flex-wrap gap-2 py-2">
-            {sfTeams.map((t, i) => t && (
-              <span key={i} className="flex items-center gap-1 text-xs text-zinc-900">
-                {t.flag_url} {t.name}
-              </span>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-1.5"><Star className="h-3.5 w-3.5" />Group Winners</CardTitle>
-          <Link href="/groups" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">View <ChevronRight className="h-3 w-3" /></Link>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 divide-x divide-y divide-zinc-50">
-            {groupWinners.map(({ group, team }) => (
-              <div key={group} className="flex items-center gap-2 px-3 py-2">
-                <span className="text-xs font-bold text-zinc-400 w-3">{group}</span>
-                {team ? (
-                  <span className="flex items-center gap-1 text-xs text-zinc-900 min-w-0">
-                    <span>{team.flag_url}</span>
-                    <span className="truncate">{team.code}</span>
-                  </span>
-                ) : (
-                  <span className="text-xs text-zinc-300">—</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-function ModelPerformance() {
-  const metrics = computeMetrics()
-  const best = getBestModel()
-  const withData = metrics.filter(m => m.total > 0)
-
-  if (withData.length === 0) {
-    return (
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5" />Model Performance</CardTitle></CardHeader>
-        <CardContent>
-          <p className="text-xs text-zinc-400">No results entered yet. Enter match results to see model metrics.</p>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5" />Model Performance</CardTitle>
-        <Link href="/metrics" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">Full <ChevronRight className="h-3 w-3" /></Link>
-      </CardHeader>
-      <CardContent className="p-0">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-zinc-100">
-              <th className="px-4 py-2 text-left font-medium text-zinc-500">Model</th>
-              <th className="px-4 py-2 text-right font-medium text-zinc-500">Acc%</th>
-              <th className="px-4 py-2 text-right font-medium text-zinc-500">Brier</th>
-              <th className="px-4 py-2 text-right font-medium text-zinc-500">N</th>
-            </tr>
-          </thead>
-          <tbody>
-            {metrics.map(m => (
-              <tr key={m.model} className={`border-b border-zinc-50 ${best === m.model ? 'bg-green-50' : ''}`}>
-                <td className="px-4 py-2 font-medium text-zinc-900">
-                  Model {m.model}
-                  {best === m.model && <span className="ml-1 text-green-600">★</span>}
-                </td>
-                <td className="px-4 py-2 text-right text-zinc-700">{m.total > 0 ? `${(m.accuracy * 100).toFixed(0)}%` : '—'}</td>
-                <td className="px-4 py-2 text-right text-zinc-700">{m.total > 0 ? m.avgBrier.toFixed(3) : '—'}</td>
-                <td className="px-4 py-2 text-right text-zinc-400">{m.total}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
-  )
-}
-
-function ActiveModelCard() {
-  const config = getConfig()
-  const best = getBestModel()
-  const metrics = computeMetrics()
-
-  return (
-    <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-900 px-4 py-3 text-white">
-      <div>
-        <div className="text-xs text-zinc-400">Active Model</div>
-        <div className="text-base font-bold">{MODEL_LABELS[config.active_model]}</div>
-        {config.active_model === 'hybrid' && (
-          <div className="text-xs text-zinc-400 mt-0.5">A:{config.weight_a} B:{config.weight_b} C:{config.weight_c}</div>
-        )}
-      </div>
-      {best && (
-        <div className="text-right">
-          <div className="text-xs text-zinc-400">Best Performing</div>
-          <div className="text-base font-bold text-green-400">Model {best}</div>
-          <div className="text-xs text-zinc-400">{(metrics.find(m => m.model === best)?.accuracy ?? 0 * 100).toFixed(0)}% acc</div>
-        </div>
-      )}
-    </div>
-  )
-}
+import { Calendar, Zap, RefreshCw, AlertCircle, ChevronRight } from 'lucide-react'
 
 const TEAM_NAMES: Record<string, string> = {
   usa:'United States',uru:'Uruguay',pan:'Panama',bol:'Bolivia',arg:'Argentina',
@@ -270,7 +21,99 @@ const TEAM_NAMES: Record<string, string> = {
   aut:'Austria',rom:'Romania',mli:'Mali',
 }
 
-function LiveDataPanel() {
+function ActiveModelCard() {
+  const config = getConfig()
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-900 px-4 py-3 text-white">
+      <div>
+        <div className="text-xs text-zinc-400">Active Model</div>
+        <div className="text-base font-bold">{MODEL_LABELS[config.active_model]}</div>
+        {config.active_model === 'hybrid' && (
+          <div className="text-xs text-zinc-400 mt-0.5">A:{config.weight_a} B:{config.weight_b} C:{config.weight_c}</div>
+        )}
+      </div>
+      <Link href="/settings" className="text-xs text-zinc-400 hover:text-white underline">Change</Link>
+    </div>
+  )
+}
+
+function TodayMatches() {
+  const fixtures = getFixtures()
+  const teams = getTeams()
+  const predictions = getPredictions()
+  const config = getConfig()
+  const todayStr = new Date().toISOString().split('T')[0]
+
+  const todayMatches = fixtures
+    .filter(f => new Date(f.kickoff_utc).toISOString().split('T')[0] === todayStr)
+    .sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
+
+  const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-1.5">
+          <Calendar className="h-3.5 w-3.5" />Today's Matches
+        </CardTitle>
+        <Link href="/matches" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
+          All matches <ChevronRight className="h-3 w-3" />
+        </Link>
+      </CardHeader>
+      <CardContent className="p-0">
+        {todayMatches.length === 0 ? (
+          <p className="px-4 py-4 text-xs text-zinc-400">No matches today.</p>
+        ) : todayMatches.map(f => {
+          const home = teamMap[f.home_team_id]
+          const away = teamMap[f.away_team_id]
+          const pred = getEffectivePrediction(predictions as any, f.id, config.active_model, {
+            a: config.weight_a, b: config.weight_b, c: config.weight_c,
+          })
+          const result = getResult(f.id)
+
+          return (
+            <Link key={f.id} href="/matches" className="block border-b border-zinc-50 last:border-0 hover:bg-zinc-50">
+              <div className="px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-lg">{home?.flag_url}</span>
+                    <span className="text-sm font-semibold text-zinc-900">{home?.code}</span>
+                    {result ? (
+                      <span className="text-sm font-black text-zinc-900 mx-1">{result.home_goals}–{result.away_goals}</span>
+                    ) : pred ? (
+                      <span className="text-sm font-medium text-zinc-400 mx-1">{goals(pred.home_goals)}–{goals(pred.away_goals)}</span>
+                    ) : (
+                      <span className="text-sm text-zinc-300 mx-1">vs</span>
+                    )}
+                    <span className="text-sm font-semibold text-zinc-900">{away?.code}</span>
+                    <span className="text-lg">{away?.flag_url}</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {result ? <Badge variant="success">Final</Badge> : <Badge variant="warning">Today</Badge>}
+                    <span className="text-xs text-zinc-400">{f.group ? `Grp ${f.group}` : f.stage.toUpperCase()}</span>
+                    <span className="text-xs text-zinc-400">{formatTime(f.kickoff_utc)}</span>
+                  </div>
+                </div>
+                {pred && !result && (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <div className="h-1.5 flex-1 rounded-full overflow-hidden bg-zinc-100 flex">
+                      <div className="h-full bg-blue-500 rounded-l-full" style={{ width: `${pred.home_win_prob * 100}%` }} />
+                      <div className="h-full bg-zinc-300" style={{ width: `${pred.draw_prob * 100}%` }} />
+                      <div className="h-full bg-red-400 rounded-r-full" style={{ width: `${pred.away_win_prob * 100}%` }} />
+                    </div>
+                    <span className="text-xs text-zinc-400 shrink-0">{pct(pred.home_win_prob)} / {pct(pred.draw_prob)} / {pct(pred.away_win_prob)}</span>
+                  </div>
+                )}
+              </div>
+            </Link>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
+}
+
+function LiveIntelligencePanel() {
   const [loading, setLoading] = useState(false)
   const [liveData, setLiveData] = useState(() => getLiveData())
   const [error, setError] = useState<string | null>(null)
@@ -290,109 +133,105 @@ function LiveDataPanel() {
     }
   }
 
-  const adjustments = liveData ? Object.entries(liveData.teamAdjustments).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])) : []
+  const adjustments = liveData
+    ? Object.entries(liveData.teamAdjustments).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    : []
   const injuryItems = liveData?.newsItems.filter(n => n.type === 'injury') ?? []
   const positiveItems = liveData?.newsItems.filter(n => n.type === 'positive') ?? []
 
   return (
     <Card>
-      <CardContent className="py-2.5">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Zap className="h-3.5 w-3.5 text-green-500 shrink-0" />
-            <div>
-              <div className="text-xs font-medium text-zinc-700">Model C — Live Intelligence</div>
-              {liveData ? (
-                <div className="text-xs text-zinc-400">
-                  {adjustments.length} teams adjusted · {injuryItems.length} injury alerts ·{' '}
-                  {new Date(liveData.fetchedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                </div>
-              ) : (
-                <div className="text-xs text-zinc-400">No live data yet — click Refresh to fetch</div>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {liveData && adjustments.length > 0 && (
-              <button
-                onClick={() => setShowLog(v => !v)}
-                className="text-xs text-blue-600 hover:underline"
-              >
-                {showLog ? 'Hide log' : 'View log'}
-              </button>
-            )}
-            <button
-              onClick={handleRefresh}
-              disabled={loading}
-              className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-            >
-              <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-              {loading ? 'Fetching…' : 'Refresh'}
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-1.5">
+          <Zap className="h-3.5 w-3.5 text-green-500" />Live Intelligence
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          {liveData && adjustments.length > 0 && (
+            <button onClick={() => setShowLog(v => !v)} className="text-xs text-blue-600 hover:underline">
+              {showLog ? 'Hide log' : 'View log'}
             </button>
-          </div>
+          )}
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Fetching…' : 'Refresh'}
+          </button>
         </div>
+      </CardHeader>
+
+      <CardContent className="pt-0">
+        {!liveData ? (
+          <p className="text-xs text-zinc-400">No data yet — click Refresh to pull live ESPN data.</p>
+        ) : (
+          <div className="text-xs text-zinc-400">
+            {adjustments.length} teams adjusted · {injuryItems.length} injury alerts · last updated{' '}
+            {new Date(liveData.fetchedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+          </div>
+        )}
 
         {error && (
           <div className="mt-2 flex items-center gap-1.5 text-xs text-red-500">
-            <AlertCircle className="h-3 w-3" /> {error}
+            <AlertCircle className="h-3 w-3" />{error}
+          </div>
+        )}
+
+        {/* Always show injury alerts when present */}
+        {!showLog && injuryItems.length > 0 && (
+          <div className="mt-3 space-y-1">
+            {injuryItems.slice(0, 3).map((item, i) => (
+              <div key={i} className="flex items-start gap-1.5 text-xs bg-red-50 rounded px-2.5 py-1.5">
+                <span className="text-red-400 shrink-0 mt-0.5">●</span>
+                <span className="text-zinc-600">{item.headline}</span>
+              </div>
+            ))}
           </div>
         )}
 
         {showLog && liveData && (
-          <div className="mt-3 space-y-3 border-t border-zinc-100 pt-3">
-            {/* Team adjustments */}
+          <div className="mt-3 space-y-4 border-t border-zinc-100 pt-3">
             {adjustments.length > 0 && (
               <div>
-                <div className="text-xs font-semibold text-zinc-500 mb-1.5">Team rating adjustments</div>
+                <div className="text-xs font-semibold text-zinc-500 mb-2">Team rating adjustments</div>
                 <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-                  {adjustments.map(([teamId, adj]) => (
-                    <div key={teamId} className="flex items-center justify-between rounded bg-zinc-50 px-2.5 py-1.5">
-                      <span className="text-xs text-zinc-700 font-medium">{TEAM_NAMES[teamId] ?? teamId}</span>
-                      <span className={`text-xs font-bold ml-2 ${adj > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                  {adjustments.map(([id, adj]) => (
+                    <div key={id} className="flex items-center justify-between rounded bg-zinc-50 px-2.5 py-1.5">
+                      <span className="text-xs text-zinc-700 font-medium truncate">{TEAM_NAMES[id] ?? id}</span>
+                      <span className={`text-xs font-bold ml-2 shrink-0 ${adj > 0 ? 'text-green-600' : 'text-red-500'}`}>
                         {adj > 0 ? '+' : ''}{(adj * 100).toFixed(0)}%
                       </span>
                     </div>
                   ))}
                 </div>
-                <div className="mt-1 text-xs text-zinc-400">
-                  Positive = boosted (recent wins/good news) · Negative = downgraded (losses/injuries)
-                </div>
+                <p className="mt-1.5 text-xs text-zinc-400">Green = boosted · Red = downgraded</p>
               </div>
             )}
-
-            {/* Injury news */}
             {injuryItems.length > 0 && (
               <div>
                 <div className="text-xs font-semibold text-red-500 mb-1.5">⚠ Injury / suspension alerts</div>
                 <div className="space-y-1">
                   {injuryItems.map((item, i) => (
-                    <div key={i} className="flex items-start gap-1.5 text-xs text-zinc-600 bg-red-50 rounded px-2.5 py-1.5">
-                      <span className="shrink-0 text-red-400 mt-0.5">●</span>
-                      <span>{item.headline}</span>
+                    <div key={i} className="flex items-start gap-1.5 text-xs bg-red-50 rounded px-2.5 py-1.5">
+                      <span className="text-red-400 shrink-0 mt-0.5">●</span>
+                      <span className="text-zinc-600">{item.headline}</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-
-            {/* Positive news */}
             {positiveItems.length > 0 && (
               <div>
                 <div className="text-xs font-semibold text-green-600 mb-1.5">✓ Positive updates</div>
                 <div className="space-y-1">
                   {positiveItems.map((item, i) => (
-                    <div key={i} className="flex items-start gap-1.5 text-xs text-zinc-600 bg-green-50 rounded px-2.5 py-1.5">
-                      <span className="shrink-0 text-green-500 mt-0.5">●</span>
-                      <span>{item.headline}</span>
+                    <div key={i} className="flex items-start gap-1.5 text-xs bg-green-50 rounded px-2.5 py-1.5">
+                      <span className="text-green-500 shrink-0 mt-0.5">●</span>
+                      <span className="text-zinc-600">{item.headline}</span>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {liveData.errors.length > 0 && (
-              <div className="text-xs text-zinc-400">
-                Data sources: {liveData.errors.length > 0 ? `partial (${liveData.errors.join(', ')})` : 'all OK'}
               </div>
             )}
           </div>
@@ -407,17 +246,14 @@ export function HomeDashboard() {
   useEffect(() => setMounted(true), [])
   if (!mounted) return (
     <div className="space-y-3 animate-pulse">
-      {[...Array(4)].map((_, i) => <div key={i} className="h-24 rounded-lg bg-zinc-100" />)}
+      {[...Array(3)].map((_, i) => <div key={i} className="h-24 rounded-lg bg-zinc-100" />)}
     </div>
   )
-
   return (
     <div className="space-y-4">
       <ActiveModelCard />
-      <LiveDataPanel />
       <TodayMatches />
-      <TopPredictions />
-      <ModelPerformance />
+      <LiveIntelligencePanel />
     </div>
   )
 }
