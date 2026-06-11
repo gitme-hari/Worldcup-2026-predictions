@@ -83,41 +83,128 @@ export interface SeedFixture {
   venue: string
 }
 
-function generateGroupFixtures(): SeedFixture[] {
-  const fixtures: SeedFixture[] = []
-  const groups = 'ABCDEFGHIJKL'.split('')
-  const venues = [
-    'MetLife Stadium', 'AT&T Stadium', 'SoFi Stadium', 'Hard Rock Stadium',
-    'Rose Bowl', "Levi's Stadium", 'Lincoln Financial Field', 'Arrowhead Stadium',
-    'Seattle', 'Vancouver', 'Toronto', 'Guadalajara', 'Mexico City', 'Monterrey',
-  ]
-  const baseDate = new Date('2026-06-11T18:00:00Z')
+// Official FIFA 2026 group stage schedule — 72 fixtures, verified from FIFA schedule
+export const SEED_FIXTURES: SeedFixture[] = [
+  // Group A
+  { id:'group-A-m1', home_team_id:'mex', away_team_id:'rsa', group:'A', stage:'group', matchday:1, kickoff_utc:'2026-06-11T18:00:00Z', venue:'Mexico City' },
+  { id:'group-A-m2', home_team_id:'kor', away_team_id:'cze', group:'A', stage:'group', matchday:1, kickoff_utc:'2026-06-12T01:00:00Z', venue:'Guadalajara' },
+  { id:'group-A-m3', home_team_id:'mex', away_team_id:'kor', group:'A', stage:'group', matchday:2, kickoff_utc:'2026-06-19T00:00:00Z', venue:'Guadalajara' },
+  { id:'group-A-m4', home_team_id:'cze', away_team_id:'rsa', group:'A', stage:'group', matchday:2, kickoff_utc:'2026-06-18T15:00:00Z', venue:'Atlanta' },
+  { id:'group-A-m5', home_team_id:'cze', away_team_id:'mex', group:'A', stage:'group', matchday:3, kickoff_utc:'2026-06-25T00:00:00Z', venue:'Mexico City' },
+  { id:'group-A-m6', home_team_id:'rsa', away_team_id:'kor', group:'A', stage:'group', matchday:3, kickoff_utc:'2026-06-25T00:00:00Z', venue:'Monterrey' },
+  // Group B
+  { id:'group-B-m1', home_team_id:'can', away_team_id:'bih', group:'B', stage:'group', matchday:1, kickoff_utc:'2026-06-12T18:00:00Z', venue:'Toronto' },
+  { id:'group-B-m2', home_team_id:'qat', away_team_id:'sui', group:'B', stage:'group', matchday:1, kickoff_utc:'2026-06-13T18:00:00Z', venue:'San Francisco Bay Area' },
+  { id:'group-B-m3', home_team_id:'can', away_team_id:'qat', group:'B', stage:'group', matchday:2, kickoff_utc:'2026-06-18T21:00:00Z', venue:'Vancouver' },
+  { id:'group-B-m4', home_team_id:'sui', away_team_id:'bih', group:'B', stage:'group', matchday:2, kickoff_utc:'2026-06-18T18:00:00Z', venue:'Los Angeles' },
+  { id:'group-B-m5', home_team_id:'sui', away_team_id:'can', group:'B', stage:'group', matchday:3, kickoff_utc:'2026-06-24T18:00:00Z', venue:'Vancouver' },
+  { id:'group-B-m6', home_team_id:'bih', away_team_id:'qat', group:'B', stage:'group', matchday:3, kickoff_utc:'2026-06-24T18:00:00Z', venue:'Seattle' },
+  // Group C
+  { id:'group-C-m1', home_team_id:'bra', away_team_id:'mar', group:'C', stage:'group', matchday:1, kickoff_utc:'2026-06-13T21:00:00Z', venue:'New Jersey' },
+  { id:'group-C-m2', home_team_id:'hai', away_team_id:'sco', group:'C', stage:'group', matchday:1, kickoff_utc:'2026-06-14T00:00:00Z', venue:'Boston' },
+  { id:'group-C-m3', home_team_id:'bra', away_team_id:'hai', group:'C', stage:'group', matchday:2, kickoff_utc:'2026-06-19T23:30:00Z', venue:'Philadelphia' },
+  { id:'group-C-m4', home_team_id:'sco', away_team_id:'mar', group:'C', stage:'group', matchday:2, kickoff_utc:'2026-06-19T21:00:00Z', venue:'Boston' },
+  { id:'group-C-m5', home_team_id:'sco', away_team_id:'bra', group:'C', stage:'group', matchday:3, kickoff_utc:'2026-06-24T21:00:00Z', venue:'Miami' },
+  { id:'group-C-m6', home_team_id:'mar', away_team_id:'hai', group:'C', stage:'group', matchday:3, kickoff_utc:'2026-06-24T21:00:00Z', venue:'Atlanta' },
+  // Group D
+  { id:'group-D-m1', home_team_id:'usa', away_team_id:'par', group:'D', stage:'group', matchday:1, kickoff_utc:'2026-06-13T00:00:00Z', venue:'Los Angeles' },
+  { id:'group-D-m2', home_team_id:'aus', away_team_id:'tur', group:'D', stage:'group', matchday:1, kickoff_utc:'2026-06-14T03:00:00Z', venue:'Vancouver' },
+  { id:'group-D-m3', home_team_id:'usa', away_team_id:'aus', group:'D', stage:'group', matchday:2, kickoff_utc:'2026-06-19T18:00:00Z', venue:'Seattle' },
+  { id:'group-D-m4', home_team_id:'tur', away_team_id:'par', group:'D', stage:'group', matchday:2, kickoff_utc:'2026-06-20T02:00:00Z', venue:'San Francisco Bay Area' },
+  { id:'group-D-m5', home_team_id:'tur', away_team_id:'usa', group:'D', stage:'group', matchday:3, kickoff_utc:'2026-06-26T01:00:00Z', venue:'Los Angeles' },
+  { id:'group-D-m6', home_team_id:'par', away_team_id:'aus', group:'D', stage:'group', matchday:3, kickoff_utc:'2026-06-26T01:00:00Z', venue:'San Francisco Bay Area' },
+  // Group E
+  { id:'group-E-m1', home_team_id:'ger', away_team_id:'cur', group:'E', stage:'group', matchday:1, kickoff_utc:'2026-06-14T16:00:00Z', venue:'Houston' },
+  { id:'group-E-m2', home_team_id:'civ', away_team_id:'ecu', group:'E', stage:'group', matchday:1, kickoff_utc:'2026-06-14T22:00:00Z', venue:'Philadelphia' },
+  { id:'group-E-m3', home_team_id:'ger', away_team_id:'civ', group:'E', stage:'group', matchday:2, kickoff_utc:'2026-06-20T19:00:00Z', venue:'Toronto' },
+  { id:'group-E-m4', home_team_id:'ecu', away_team_id:'cur', group:'E', stage:'group', matchday:2, kickoff_utc:'2026-06-20T23:00:00Z', venue:'Kansas City' },
+  { id:'group-E-m5', home_team_id:'cur', away_team_id:'civ', group:'E', stage:'group', matchday:3, kickoff_utc:'2026-06-25T19:00:00Z', venue:'Philadelphia' },
+  { id:'group-E-m6', home_team_id:'ecu', away_team_id:'ger', group:'E', stage:'group', matchday:3, kickoff_utc:'2026-06-25T19:00:00Z', venue:'New Jersey' },
+  // Group F
+  { id:'group-F-m1', home_team_id:'ned', away_team_id:'jpn', group:'F', stage:'group', matchday:1, kickoff_utc:'2026-06-14T19:00:00Z', venue:'Dallas' },
+  { id:'group-F-m2', home_team_id:'swe', away_team_id:'tun', group:'F', stage:'group', matchday:1, kickoff_utc:'2026-06-15T01:00:00Z', venue:'Monterrey' },
+  { id:'group-F-m3', home_team_id:'ned', away_team_id:'swe', group:'F', stage:'group', matchday:2, kickoff_utc:'2026-06-20T16:00:00Z', venue:'Houston' },
+  { id:'group-F-m4', home_team_id:'tun', away_team_id:'jpn', group:'F', stage:'group', matchday:2, kickoff_utc:'2026-06-21T03:00:00Z', venue:'Monterrey' },
+  { id:'group-F-m5', home_team_id:'jpn', away_team_id:'swe', group:'F', stage:'group', matchday:3, kickoff_utc:'2026-06-25T22:00:00Z', venue:'Dallas' },
+  { id:'group-F-m6', home_team_id:'tun', away_team_id:'ned', group:'F', stage:'group', matchday:3, kickoff_utc:'2026-06-25T22:00:00Z', venue:'Kansas City' },
+  // Group G
+  { id:'group-G-m1', home_team_id:'bel', away_team_id:'egy', group:'G', stage:'group', matchday:1, kickoff_utc:'2026-06-15T18:00:00Z', venue:'Seattle' },
+  { id:'group-G-m2', home_team_id:'irn', away_team_id:'nzl', group:'G', stage:'group', matchday:1, kickoff_utc:'2026-06-16T00:00:00Z', venue:'Los Angeles' },
+  { id:'group-G-m3', home_team_id:'bel', away_team_id:'irn', group:'G', stage:'group', matchday:2, kickoff_utc:'2026-06-21T18:00:00Z', venue:'Los Angeles' },
+  { id:'group-G-m4', home_team_id:'nzl', away_team_id:'egy', group:'G', stage:'group', matchday:2, kickoff_utc:'2026-06-22T00:00:00Z', venue:'Vancouver' },
+  { id:'group-G-m5', home_team_id:'egy', away_team_id:'irn', group:'G', stage:'group', matchday:3, kickoff_utc:'2026-06-27T02:00:00Z', venue:'Seattle' },
+  { id:'group-G-m6', home_team_id:'nzl', away_team_id:'bel', group:'G', stage:'group', matchday:3, kickoff_utc:'2026-06-27T02:00:00Z', venue:'Vancouver' },
+  // Group H
+  { id:'group-H-m1', home_team_id:'esp', away_team_id:'cpv', group:'H', stage:'group', matchday:1, kickoff_utc:'2026-06-15T15:00:00Z', venue:'Atlanta' },
+  { id:'group-H-m2', home_team_id:'ksa', away_team_id:'uru', group:'H', stage:'group', matchday:1, kickoff_utc:'2026-06-15T21:00:00Z', venue:'Miami' },
+  { id:'group-H-m3', home_team_id:'esp', away_team_id:'ksa', group:'H', stage:'group', matchday:2, kickoff_utc:'2026-06-21T16:00:00Z', venue:'Dallas' },
+  { id:'group-H-m4', home_team_id:'uru', away_team_id:'cpv', group:'H', stage:'group', matchday:2, kickoff_utc:'2026-06-21T21:00:00Z', venue:'Miami' },
+  { id:'group-H-m5', home_team_id:'uru', away_team_id:'esp', group:'H', stage:'group', matchday:3, kickoff_utc:'2026-06-26T23:00:00Z', venue:'Guadalajara' },
+  { id:'group-H-m6', home_team_id:'cpv', away_team_id:'ksa', group:'H', stage:'group', matchday:3, kickoff_utc:'2026-06-26T23:00:00Z', venue:'Houston' },
+  // Group I
+  { id:'group-I-m1', home_team_id:'fra', away_team_id:'sen', group:'I', stage:'group', matchday:1, kickoff_utc:'2026-06-16T18:00:00Z', venue:'New Jersey' },
+  { id:'group-I-m2', home_team_id:'irq', away_team_id:'nor', group:'I', stage:'group', matchday:1, kickoff_utc:'2026-06-16T21:00:00Z', venue:'Boston' },
+  { id:'group-I-m3', home_team_id:'fra', away_team_id:'irq', group:'I', stage:'group', matchday:2, kickoff_utc:'2026-06-22T20:00:00Z', venue:'Philadelphia' },
+  { id:'group-I-m4', home_team_id:'nor', away_team_id:'sen', group:'I', stage:'group', matchday:2, kickoff_utc:'2026-06-21T23:00:00Z', venue:'New Jersey' },
+  { id:'group-I-m5', home_team_id:'nor', away_team_id:'fra', group:'I', stage:'group', matchday:3, kickoff_utc:'2026-06-26T18:00:00Z', venue:'Boston' },
+  { id:'group-I-m6', home_team_id:'sen', away_team_id:'irq', group:'I', stage:'group', matchday:3, kickoff_utc:'2026-06-26T18:00:00Z', venue:'Toronto' },
+  // Group J
+  { id:'group-J-m1', home_team_id:'arg', away_team_id:'alg', group:'J', stage:'group', matchday:1, kickoff_utc:'2026-06-17T00:00:00Z', venue:'Kansas City' },
+  { id:'group-J-m2', home_team_id:'aut', away_team_id:'jor', group:'J', stage:'group', matchday:1, kickoff_utc:'2026-06-17T03:00:00Z', venue:'San Francisco Bay Area' },
+  { id:'group-J-m3', home_team_id:'arg', away_team_id:'aut', group:'J', stage:'group', matchday:2, kickoff_utc:'2026-06-22T16:00:00Z', venue:'Dallas' },
+  { id:'group-J-m4', home_team_id:'jor', away_team_id:'alg', group:'J', stage:'group', matchday:2, kickoff_utc:'2026-06-22T02:00:00Z', venue:'San Francisco Bay Area' },
+  { id:'group-J-m5', home_team_id:'alg', away_team_id:'aut', group:'J', stage:'group', matchday:3, kickoff_utc:'2026-06-28T01:00:00Z', venue:'Kansas City' },
+  { id:'group-J-m6', home_team_id:'jor', away_team_id:'arg', group:'J', stage:'group', matchday:3, kickoff_utc:'2026-06-28T01:00:00Z', venue:'Dallas' },
+  // Group K
+  { id:'group-K-m1', home_team_id:'por', away_team_id:'cod', group:'K', stage:'group', matchday:1, kickoff_utc:'2026-06-17T16:00:00Z', venue:'Houston' },
+  { id:'group-K-m2', home_team_id:'uzb', away_team_id:'col', group:'K', stage:'group', matchday:1, kickoff_utc:'2026-06-18T01:00:00Z', venue:'Mexico City' },
+  { id:'group-K-m3', home_team_id:'por', away_team_id:'uzb', group:'K', stage:'group', matchday:2, kickoff_utc:'2026-06-22T16:00:00Z', venue:'Houston' },
+  { id:'group-K-m4', home_team_id:'col', away_team_id:'cod', group:'K', stage:'group', matchday:2, kickoff_utc:'2026-06-24T01:00:00Z', venue:'Guadalajara' },
+  { id:'group-K-m5', home_team_id:'col', away_team_id:'por', group:'K', stage:'group', matchday:3, kickoff_utc:'2026-06-27T22:30:00Z', venue:'Miami' },
+  { id:'group-K-m6', home_team_id:'cod', away_team_id:'uzb', group:'K', stage:'group', matchday:3, kickoff_utc:'2026-06-27T22:30:00Z', venue:'Atlanta' },
+  // Group L
+  { id:'group-L-m1', home_team_id:'eng', away_team_id:'cro', group:'L', stage:'group', matchday:1, kickoff_utc:'2026-06-17T19:00:00Z', venue:'Dallas' },
+  { id:'group-L-m2', home_team_id:'gha', away_team_id:'pan', group:'L', stage:'group', matchday:1, kickoff_utc:'2026-06-17T22:00:00Z', venue:'Toronto' },
+  { id:'group-L-m3', home_team_id:'eng', away_team_id:'gha', group:'L', stage:'group', matchday:2, kickoff_utc:'2026-06-23T19:00:00Z', venue:'Boston' },
+  { id:'group-L-m4', home_team_id:'pan', away_team_id:'cro', group:'L', stage:'group', matchday:2, kickoff_utc:'2026-06-23T22:00:00Z', venue:'Toronto' },
+  { id:'group-L-m5', home_team_id:'pan', away_team_id:'eng', group:'L', stage:'group', matchday:3, kickoff_utc:'2026-06-27T20:00:00Z', venue:'New Jersey' },
+  { id:'group-L-m6', home_team_id:'cro', away_team_id:'gha', group:'L', stage:'group', matchday:3, kickoff_utc:'2026-06-27T20:00:00Z', venue:'Philadelphia' },
+]
 
-  groups.forEach((group, gi) => {
-    const groupTeams = SEED_TEAMS.filter(t => t.group === group)
-    const matchups = [[0,1],[2,3],[0,2],[1,3],[0,3],[1,2]]
-    const matchdays = [1,1,2,2,3,3]
-
-    matchups.forEach(([hi, ai], mi) => {
-      const kickoff = new Date(baseDate)
-      kickoff.setDate(baseDate.getDate() + gi * 1 + Math.floor(mi / 2) * 4)
-      kickoff.setHours(18 + (mi % 2) * 3)
-      fixtures.push({
-        id: `group-${group}-m${mi + 1}`,
-        home_team_id: groupTeams[hi].id,
-        away_team_id: groupTeams[ai].id,
-        group,
-        stage: 'group',
-        matchday: matchdays[mi],
-        kickoff_utc: kickoff.toISOString(),
-        venue: venues[gi % venues.length],
-      })
-    })
-  })
-  return fixtures
+// ─── Venue factors ────────────────────────────────────────────────────────────
+// altitude: teams adapted to playing at altitude (CONMEBOL + Mexico)
+const ALTITUDE_ADAPTED = new Set(['mex','arg','col','ecu','bol','par','uru','bra','per','chi','ven'])
+// heat: teams from hot climates perform better in Miami/Dallas/Houston/Atlanta
+const HEAT_CLIMATE = new Set(['mar','sen','civ','egy','gha','tun','ksa','irq','irn','cpv','cod','alg','jor','qat'])
+// cold climate teams penalised in heat venues
+const COLD_CLIMATE = new Set(['nor','swe','ned','bel','ger','sco','eng','aus','sui','cze','bih','aut'])
+const HEAT_VENUES = new Set(['Miami','Dallas','Houston','Atlanta'])
+const ALTITUDE_VENUES = new Set(['Mexico City','Guadalajara','Monterrey'])
+// host nation bonuses at home venues
+const HOST_HOME_VENUES: Record<string, string[]> = {
+  usa: ['Los Angeles','Seattle','San Francisco Bay Area','Kansas City','New Jersey','Philadelphia','Boston','Miami','Dallas','Houston','Atlanta','New York'],
+  mex: ['Mexico City','Guadalajara','Monterrey'],
+  can: ['Toronto','Vancouver'],
 }
 
-export const SEED_FIXTURES: SeedFixture[] = generateGroupFixtures()
+function venueEloAdjust(teamId: string, venue: string): number {
+  let adj = 0
+  if (ALTITUDE_VENUES.has(venue)) {
+    adj += ALTITUDE_ADAPTED.has(teamId) ? 80 : -120
+  }
+  if (HEAT_VENUES.has(venue)) {
+    if (HEAT_CLIMATE.has(teamId)) adj += 50
+    else if (COLD_CLIMATE.has(teamId)) adj -= 60
+  }
+  // host nation bonus
+  for (const [host, venues] of Object.entries(HOST_HOME_VENUES)) {
+    if (teamId === host && venues.includes(venue)) {
+      adj += host === 'usa' ? 90 : host === 'mex' ? 110 : 80
+      break
+    }
+  }
+  return adj
+}
 
 // ─── Model B: historical tournament over/under-performance vs raw Elo ────────
 const MODEL_B_BIAS: Record<string, number> = {
@@ -195,8 +282,13 @@ export function generatePredictions(): SeedPrediction[] {
     const away = teamMap[fixture.away_team_id]
     if (!home || !away) return
 
-    // ── Model A: pure Elo + Poisson ───────────────────────────────────────
-    const { homeLambda: hlA, awayLambda: alA } = poissonGoals(home.elo_rating, away.elo_rating)
+    const hVenueAdj = venueEloAdjust(home.id, fixture.venue)
+    const aVenueAdj = venueEloAdjust(away.id, fixture.venue)
+    const hEloV = home.elo_rating + hVenueAdj
+    const aEloV = away.elo_rating + aVenueAdj
+
+    // ── Model A: pure Elo + Poisson + venue ───────────────────────────────
+    const { homeLambda: hlA, awayLambda: alA } = poissonGoals(hEloV, aEloV)
     const pA = calcOutcomeProbs(hlA, alA)
     predictions.push({
       id: `pred-A-${fixture.id}`, fixture_id: fixture.id, model: 'A',
@@ -207,12 +299,12 @@ export function generatePredictions(): SeedPrediction[] {
       away_win_prob: Math.round(pA.awayWin * 100) / 100,
     })
 
-    // ── Model B: ML — Elo adjusted by tournament performance history ──────
+    // ── Model B: ML — Elo adjusted by tournament performance history + venue ─
     const hBias = MODEL_B_BIAS[home.id] ?? 0
     const aBias = MODEL_B_BIAS[away.id] ?? 0
     const { homeLambda: hlB, awayLambda: alB } = poissonGoals(
-      home.elo_rating * (1 + hBias),
-      away.elo_rating * (1 + aBias),
+      hEloV * (1 + hBias),
+      aEloV * (1 + aBias),
       0.12
     )
     const pB = calcOutcomeProbs(hlB, alB)
@@ -225,13 +317,13 @@ export function generatePredictions(): SeedPrediction[] {
       away_win_prob: Math.round(pB.awayWin * 100) / 100,
     })
 
-    // ── Model C: market-calibrated base (live data applied on top in store) ─
+    // ── Model C: market-calibrated base + venue ───────────────────────────
     const hAtk = MODEL_C_ATTACK_BIAS[home.id] ?? 1.0
     const aDef = MODEL_C_DEFENSE_BIAS[away.id] ?? 1.0
     const aAtk = MODEL_C_ATTACK_BIAS[away.id] ?? 1.0
     const hDef = MODEL_C_DEFENSE_BIAS[home.id] ?? 1.0
     const { homeLambda: hlCraw, awayLambda: alCraw } = poissonGoals(
-      home.elo_rating, away.elo_rating, 0.10
+      hEloV, aEloV, 0.10
     )
     const hlC = Math.max(0.3, hlCraw * hAtk * (2 - aDef))
     const alC = Math.max(0.3, alCraw * aAtk * (2 - hDef))
