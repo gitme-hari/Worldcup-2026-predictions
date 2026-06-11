@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, ListOrdered, Users, GitBranch, Star, Trophy, BarChart2, Settings, ClipboardList } from 'lucide-react'
+import { LayoutDashboard, ListOrdered, Users, GitBranch, Star, Trophy, BarChart2, Settings, FlaskConical } from 'lucide-react'
 
 const NAV = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -11,6 +11,7 @@ const NAV = [
   { href: '/bracket', label: 'Bracket', icon: GitBranch },
   { href: '/bonus', label: 'Bonus', icon: Star },
   { href: '/results', label: 'Results', icon: Trophy },
+  { href: '/analysis', label: 'Analysis', icon: FlaskConical },
   { href: '/metrics', label: 'Metrics', icon: BarChart2 },
   { href: '/settings', label: 'Settings', icon: Settings },
 ]
