@@ -257,10 +257,24 @@ function ActiveModelCard() {
   )
 }
 
+const TEAM_NAMES: Record<string, string> = {
+  usa:'United States',uru:'Uruguay',pan:'Panama',bol:'Bolivia',arg:'Argentina',
+  chi:'Chile',per:'Peru',pol:'Poland',bra:'Brazil',col:'Colombia',ecu:'Ecuador',
+  par:'Paraguay',fra:'France',bel:'Belgium',tun:'Tunisia',mar:'Morocco',
+  ger:'Germany',esp:'Spain',den:'Denmark',tur:'Turkey',eng:'England',
+  ned:'Netherlands',irn:'Iran',wal:'Wales',por:'Portugal',cro:'Croatia',
+  ksa:'Saudi Arabia',aus:'Australia',ita:'Italy',sui:'Switzerland',nga:'Nigeria',
+  kor:'South Korea',jpn:'Japan',sen:'Senegal',cmr:'Cameroon',nzl:'New Zealand',
+  mex:'Mexico',can:'Canada',crc:'Costa Rica',ukr:'Ukraine',egy:'Egypt',
+  civ:"Côte d'Ivoire",alg:'Algeria',rsa:'South Africa',svk:'Slovakia',
+  aut:'Austria',rom:'Romania',mli:'Mali',
+}
+
 function LiveDataPanel() {
   const [loading, setLoading] = useState(false)
   const [liveData, setLiveData] = useState(() => getLiveData())
   const [error, setError] = useState<string | null>(null)
+  const [showLog, setShowLog] = useState(false)
 
   const handleRefresh = async () => {
     setLoading(true)
@@ -276,8 +290,9 @@ function LiveDataPanel() {
     }
   }
 
-  const adjCount = liveData ? Object.keys(liveData.teamAdjustments).length : 0
-  const injuryCount = liveData?.newsItems.filter(n => n.type === 'injury').length ?? 0
+  const adjustments = liveData ? Object.entries(liveData.teamAdjustments).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])) : []
+  const injuryItems = liveData?.newsItems.filter(n => n.type === 'injury') ?? []
+  const positiveItems = liveData?.newsItems.filter(n => n.type === 'positive') ?? []
 
   return (
     <Card>
@@ -289,7 +304,7 @@ function LiveDataPanel() {
               <div className="text-xs font-medium text-zinc-700">Model C — Live Intelligence</div>
               {liveData ? (
                 <div className="text-xs text-zinc-400">
-                  {adjCount} teams adjusted · {injuryCount} injury alerts ·{' '}
+                  {adjustments.length} teams adjusted · {injuryItems.length} injury alerts ·{' '}
                   {new Date(liveData.fetchedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                 </div>
               ) : (
@@ -297,28 +312,89 @@ function LiveDataPanel() {
               )}
             </div>
           </div>
-          <button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? 'Fetching…' : 'Refresh'}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {liveData && adjustments.length > 0 && (
+              <button
+                onClick={() => setShowLog(v => !v)}
+                className="text-xs text-blue-600 hover:underline"
+              >
+                {showLog ? 'Hide log' : 'View log'}
+              </button>
+            )}
+            <button
+              onClick={handleRefresh}
+              disabled={loading}
+              className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Fetching…' : 'Refresh'}
+            </button>
+          </div>
         </div>
+
         {error && (
           <div className="mt-2 flex items-center gap-1.5 text-xs text-red-500">
             <AlertCircle className="h-3 w-3" /> {error}
           </div>
         )}
-        {liveData && liveData.newsItems.filter(n => n.type === 'injury').length > 0 && (
-          <div className="mt-2 space-y-1 border-t border-zinc-50 pt-2">
-            {liveData.newsItems.filter(n => n.type === 'injury').slice(0, 3).map((item, i) => (
-              <div key={i} className="flex items-start gap-1.5 text-xs text-zinc-500">
-                <span className="shrink-0 text-red-400">●</span>
-                <span className="truncate">{item.headline}</span>
+
+        {showLog && liveData && (
+          <div className="mt-3 space-y-3 border-t border-zinc-100 pt-3">
+            {/* Team adjustments */}
+            {adjustments.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-zinc-500 mb-1.5">Team rating adjustments</div>
+                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                  {adjustments.map(([teamId, adj]) => (
+                    <div key={teamId} className="flex items-center justify-between rounded bg-zinc-50 px-2.5 py-1.5">
+                      <span className="text-xs text-zinc-700 font-medium">{TEAM_NAMES[teamId] ?? teamId}</span>
+                      <span className={`text-xs font-bold ml-2 ${adj > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                        {adj > 0 ? '+' : ''}{(adj * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-1 text-xs text-zinc-400">
+                  Positive = boosted (recent wins/good news) · Negative = downgraded (losses/injuries)
+                </div>
               </div>
-            ))}
+            )}
+
+            {/* Injury news */}
+            {injuryItems.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-red-500 mb-1.5">⚠ Injury / suspension alerts</div>
+                <div className="space-y-1">
+                  {injuryItems.map((item, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-xs text-zinc-600 bg-red-50 rounded px-2.5 py-1.5">
+                      <span className="shrink-0 text-red-400 mt-0.5">●</span>
+                      <span>{item.headline}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Positive news */}
+            {positiveItems.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-green-600 mb-1.5">✓ Positive updates</div>
+                <div className="space-y-1">
+                  {positiveItems.map((item, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-xs text-zinc-600 bg-green-50 rounded px-2.5 py-1.5">
+                      <span className="shrink-0 text-green-500 mt-0.5">●</span>
+                      <span>{item.headline}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {liveData.errors.length > 0 && (
+              <div className="text-xs text-zinc-400">
+                Data sources: {liveData.errors.length > 0 ? `partial (${liveData.errors.join(', ')})` : 'all OK'}
+              </div>
+            )}
           </div>
         )}
       </CardContent>
