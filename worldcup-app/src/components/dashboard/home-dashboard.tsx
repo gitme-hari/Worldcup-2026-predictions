@@ -1,13 +1,13 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { getConfig, getTeams, getFixtures, getPredictions, getResults, getResult, getBestModel, computeMetrics, getBonusPredictions } from '@/lib/store'
+import { getConfig, getTeams, getFixtures, getPredictions, getResults, getResult, getBestModel, computeMetrics, getBonusPredictions, fetchLiveData, getLiveData } from '@/lib/store'
 import { computeGroupStandings, getEffectivePrediction } from '@/lib/models'
 import { MODEL_LABELS, MODEL_COLORS, formatDate, formatTime, pct, goals } from '@/lib/utils'
 import type { ModelConfig } from '@/lib/types'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Trophy, TrendingUp, Calendar, Star, ChevronRight, Target } from 'lucide-react'
+import { Trophy, TrendingUp, Calendar, Star, ChevronRight, Target, Zap, RefreshCw, AlertCircle } from 'lucide-react'
 
 function TodayMatches() {
   const fixtures = getFixtures()
@@ -257,6 +257,75 @@ function ActiveModelCard() {
   )
 }
 
+function LiveDataPanel() {
+  const [loading, setLoading] = useState(false)
+  const [liveData, setLiveData] = useState(() => getLiveData())
+  const [error, setError] = useState<string | null>(null)
+
+  const handleRefresh = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await fetchLiveData()
+      setLiveData(data)
+      window.dispatchEvent(new Event('storage'))
+    } catch {
+      setError('Failed to fetch live data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const adjCount = liveData ? Object.keys(liveData.teamAdjustments).length : 0
+  const injuryCount = liveData?.newsItems.filter(n => n.type === 'injury').length ?? 0
+
+  return (
+    <Card>
+      <CardContent className="py-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Zap className="h-3.5 w-3.5 text-green-500 shrink-0" />
+            <div>
+              <div className="text-xs font-medium text-zinc-700">Model C — Live Intelligence</div>
+              {liveData ? (
+                <div className="text-xs text-zinc-400">
+                  {adjCount} teams adjusted · {injuryCount} injury alerts ·{' '}
+                  {new Date(liveData.fetchedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              ) : (
+                <div className="text-xs text-zinc-400">No live data yet — click Refresh to fetch</div>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Fetching…' : 'Refresh'}
+          </button>
+        </div>
+        {error && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-red-500">
+            <AlertCircle className="h-3 w-3" /> {error}
+          </div>
+        )}
+        {liveData && liveData.newsItems.filter(n => n.type === 'injury').length > 0 && (
+          <div className="mt-2 space-y-1 border-t border-zinc-50 pt-2">
+            {liveData.newsItems.filter(n => n.type === 'injury').slice(0, 3).map((item, i) => (
+              <div key={i} className="flex items-start gap-1.5 text-xs text-zinc-500">
+                <span className="shrink-0 text-red-400">●</span>
+                <span className="truncate">{item.headline}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function HomeDashboard() {
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
@@ -269,6 +338,7 @@ export function HomeDashboard() {
   return (
     <div className="space-y-4">
       <ActiveModelCard />
+      <LiveDataPanel />
       <TodayMatches />
       <TopPredictions />
       <ModelPerformance />

@@ -22,8 +22,8 @@ const MODELS: { key: ModelKey; label: string; description: string }[] = [
   },
   {
     key: 'C',
-    label: 'Model C — Market',
-    description: 'Bookmaker odds converted to implied probabilities, normalized for vig. Reflects crowd wisdom and sharp money. Derives expected goals from market-implied win probs via calibration.',
+    label: 'Model C — Live Intelligence',
+    description: 'Market-calibrated base predictions dynamically adjusted with live ESPN data: match results, injury news, and player availability. Refresh on the dashboard to pull the latest intelligence before each matchday.',
   },
   {
     key: 'hybrid',
