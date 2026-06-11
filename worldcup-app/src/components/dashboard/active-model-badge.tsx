@@ -8,7 +8,10 @@ export function ActiveModelBadge() {
   const [model, setModel] = useState('A')
 
   useEffect(() => {
-    setModel(getConfig().active_model)
+    const read = () => setModel(getConfig().active_model)
+    read()
+    window.addEventListener('storage', read)
+    return () => window.removeEventListener('storage', read)
   }, [])
 
   return (

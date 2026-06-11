@@ -91,19 +91,31 @@ export function BonusPredictionsPanel() {
 
     const standings = computeGroupStandings(fixtures as any, teams, getScore)
 
+    // Save group winners
     'ABCDEFGHIJKL'.split('').forEach(g => {
       const winner = standings[g]?.[0]?.team
       if (winner) saveBonusPrediction(`winner_group_${g}`, winner.id)
     })
 
-    // Pick champion as team with highest Elo among predicted group winners
-    const winners = 'ABCDEFGHIJKL'.split('').map(g => standings[g]?.[0]?.team).filter(Boolean)
-    winners.sort((a, b) => (b?.elo_rating ?? 0) - (a?.elo_rating ?? 0))
-    if (winners[0]) saveBonusPrediction('champion', winners[0].id)
-    if (winners[1]) saveBonusPrediction('sf1', winners[1].id)
-    if (winners[2]) saveBonusPrediction('sf2', winners[2].id)
-    if (winners[3]) saveBonusPrediction('sf3', winners[3].id)
-    if (winners[4]) saveBonusPrediction('sf4', winners[4].id)
+    // Rank group winners by model-predicted strength:
+    // use points × goal difference as proxy so model C/B diverge from raw Elo
+    const winners = 'ABCDEFGHIJKL'.split('').flatMap(g => {
+      const s = standings[g]?.[0]
+      if (!s) return []
+      const modelStrength = s.points * 10 + s.gd + (s.team.elo_rating / 200)
+      return [{ team: s.team, strength: modelStrength }]
+    })
+    winners.sort((a, b) => b.strength - a.strength)
+
+    // Champion = strongest predicted group winner
+    const champion = winners[0]?.team
+    if (champion) saveBonusPrediction('champion', champion.id)
+
+    // Semi-finalists = champion + next 3 (champion is always sf1)
+    const sfPicks = [champion, winners[1]?.team, winners[2]?.team, winners[3]?.team]
+    sfPicks.forEach((t, i) => {
+      if (t) saveBonusPrediction(`sf${i + 1}`, t.id)
+    })
 
     setBonus(getBonusPredictions())
     setAutoFilled(true)

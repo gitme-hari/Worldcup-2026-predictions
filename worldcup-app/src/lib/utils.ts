@@ -26,7 +26,7 @@ export function goals(g: number) {
 export const MODEL_LABELS: Record<string, string> = {
   A: 'Model A (Poisson)',
   B: 'Model B (ML)',
-  C: 'Model C (Market)',
+  C: 'Model C (Live)',
   hybrid: 'Hybrid',
 }
 
