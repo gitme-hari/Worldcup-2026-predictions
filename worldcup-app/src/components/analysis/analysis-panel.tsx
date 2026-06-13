@@ -1,11 +1,11 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getFixtures, getTeams, getResults, getLockedPredictions } from '@/lib/store'
+import { getFixtures, getTeams, getResults, getLockedPredictions, getHumanPredictions, computeHumanBiases } from '@/lib/store'
 import { getOutcome } from '@/lib/models'
 import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { TrendingUp, Target, CheckCircle, XCircle, Minus } from 'lucide-react'
+import { TrendingUp, Target, CheckCircle, XCircle, Minus, Brain, Zap } from 'lucide-react'
 
 interface MatchAnalysis {
   fixtureId: string
@@ -43,6 +43,7 @@ export function AnalysisPanel() {
   const teams = getTeams()
   const results = getResults()
   const lockedPreds = getLockedPredictions()
+  const humanPredsList = getHumanPredictions()
   const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
 
   // Build per-match analysis rows (only matches with both a result AND a locked prediction)
