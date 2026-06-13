@@ -58,7 +58,7 @@ function ResultRow({
   fixture: SeedFixture
   homeTeam: { name: string; code: string; flag_url: string } | undefined
   awayTeam: { name: string; code: string; flag_url: string } | undefined
-  onSaved: () => void
+  onSaved: (fixtureId: string) => void
 }) {
   const config = getConfig()
   const predictions = getPredictions()
@@ -122,7 +122,7 @@ function ResultRow({
     saveResult({ fixture_id: fixture.id, home_goals: h, away_goals: a })
     setSavedResult({ home: h, away: a })
     setShowConfirm(false)
-    onSaved()
+    onSaved(fixture.id)
   }, [homeActual, awayActual, isLocked, livePred, selectedModel, fixture.id, onSaved])
 
   const handleSaveClick = () => {
@@ -158,7 +158,7 @@ function ResultRow({
           onCancel={() => setShowConfirm(false)}
         />
       )}
-      <div className={`border-b border-zinc-50 px-4 py-3 last:border-0 transition-colors ${isSaved ? 'bg-green-50/40' : ''}`}>
+      <div className={`border-b border-zinc-100 px-4 py-3 last:border-0 transition-colors ${isSaved ? 'bg-zinc-50 opacity-80' : ''}`}>
         {/* Match header */}
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <span className="text-xs text-zinc-400 shrink-0">{formatDate(fixture.kickoff_utc)} {formatTime(fixture.kickoff_utc)}</span>
@@ -272,13 +272,16 @@ function ResultRow({
 
 export function ResultsEntry() {
   const [mounted, setMounted] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'pending' | 'entered'>('pending')
+  const [filter, setFilter] = useState<'all' | 'pending' | 'entered'>('all')
   const [groupFilter, setGroupFilter] = useState('All')
-  const [saveCount, setSaveCount] = useState(0)
+  // Tracks fixture IDs saved in this session so they stay visible even in "pending" view
+  const [sessionSaved, setSessionSaved] = useState<Set<string>>(new Set())
 
   useEffect(() => setMounted(true), [])
 
-  const handleSaved = useCallback(() => setSaveCount(c => c + 1), [])
+  const handleSaved = useCallback((fixtureId: string) => {
+    setSessionSaved(prev => new Set([...prev, fixtureId]))
+  }, [])
 
   if (!mounted) return <div className="h-96 animate-pulse rounded-lg bg-zinc-100" />
 
@@ -291,7 +294,8 @@ export function ResultsEntry() {
     .sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
 
   if (groupFilter !== 'All') filtered = filtered.filter(f => f.group === groupFilter)
-  if (filter === 'pending') filtered = filtered.filter(f => !getResult(f.id))
+  // Keep session-saved fixtures visible even in pending filter
+  if (filter === 'pending') filtered = filtered.filter(f => !getResult(f.id) || sessionSaved.has(f.id))
   if (filter === 'entered') filtered = filtered.filter(f => !!getResult(f.id))
 
   const allResults = fixtures.filter(f => getResult(f.id)).length
@@ -321,7 +325,7 @@ export function ResultsEntry() {
             <option key={g} value={g}>{g === 'All' ? 'All Groups' : `Group ${g}`}</option>
           ))}
         </select>
-        <span className="text-xs text-zinc-400">{allResults + saveCount * 0} results entered</span>
+        <span className="text-xs text-zinc-400">{allResults} results entered</span>
       </div>
 
       <div className="text-xs text-zinc-400 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
@@ -339,6 +343,7 @@ export function ResultsEntry() {
             awayTeam={teamMap[f.away_team_id]}
             onSaved={handleSaved}
           />
+
         ))}
       </Card>
     </div>
