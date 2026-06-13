@@ -259,6 +259,214 @@ export function AnalysisPanel() {
           </table>
         </div>
       </Card>
+
+      {/* Section A: You vs The Model */}
+      {(() => {
+        // Build per-fixture human comparison rows (only where there's a human pred + result)
+        const humanRows = humanPredsList
+          .map(hp => {
+            const result = results.find(r => r.fixture_id === hp.fixture_id)
+            if (!result) return null
+            const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+            if (!locked) return null
+            const fixture = fixtures.find(f => f.id === hp.fixture_id)
+            if (!fixture) return null
+            const home = teamMap[fixture.home_team_id]
+            const away = teamMap[fixture.away_team_id]
+            if (!home || !away) return null
+
+            const humanOutcome = getOutcome(hp.home_goals, hp.away_goals)
+            const modelOutcome = getOutcome(locked.home_goals, locked.away_goals)
+            const actualOutcome = getOutcome(result.home_goals, result.away_goals)
+
+            return {
+              fixtureId: fixture.id,
+              date: fixture.kickoff_utc,
+              homeTeam: home,
+              awayTeam: away,
+              modelHome: locked.home_goals,
+              modelAway: locked.away_goals,
+              humanHome: hp.home_goals,
+              humanAway: hp.away_goals,
+              comment: hp.comment,
+              actualHome: result.home_goals,
+              actualAway: result.away_goals,
+              humanCorrect: humanOutcome === actualOutcome,
+              modelCorrect: modelOutcome === actualOutcome,
+              createdAt: hp.created_at,
+            }
+          })
+          .filter((r): r is NonNullable<typeof r> => r !== null)
+
+        if (humanRows.length === 0) return null
+
+        const humanCorrectCount = humanRows.filter(r => r.humanCorrect).length
+        const modelCorrectCount = humanRows.filter(r => r.modelCorrect).length
+        const bothWrong = humanRows.filter(r => !r.humanCorrect && !r.modelCorrect).length
+        const humanAcc = humanRows.length > 0 ? Math.round((humanCorrectCount / humanRows.length) * 100) : 0
+        const modelAcc = humanRows.length > 0 ? Math.round((modelCorrectCount / humanRows.length) * 100) : 0
+
+        return (
+          <>
+            {/* Section A */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5 text-blue-500" />
+                  You vs The Model
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
+                  <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
+                    <div className="text-xs text-zinc-400">Total overrides</div>
+                    <div className="text-2xl font-bold text-zinc-900 mt-0.5">{humanRows.length}</div>
+                  </div>
+                  <div className="rounded-lg bg-blue-50 px-3 py-2.5">
+                    <div className="text-xs text-blue-500">You correct</div>
+                    <div className="text-2xl font-bold text-blue-700 mt-0.5">{humanCorrectCount} <span className="text-sm font-medium">({humanAcc}%)</span></div>
+                  </div>
+                  <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
+                    <div className="text-xs text-zinc-400">Model correct</div>
+                    <div className="text-2xl font-bold text-zinc-700 mt-0.5">{modelCorrectCount} <span className="text-sm font-medium">({modelAcc}%)</span></div>
+                  </div>
+                  <div className="rounded-lg bg-red-50 px-3 py-2.5">
+                    <div className="text-xs text-red-400">Both wrong</div>
+                    <div className="text-2xl font-bold text-red-600 mt-0.5">{bothWrong}</div>
+                  </div>
+                </div>
+                <div className="text-xs text-zinc-500">
+                  {humanAcc > modelAcc
+                    ? `You're beating the model on your overrides! (+${humanAcc - modelAcc}% accuracy)`
+                    : humanAcc < modelAcc
+                    ? `The model is ahead on overridden matches (+${modelAcc - humanAcc}% for model)`
+                    : `You and the model are tied on overridden matches.`}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Section B: Override Log */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5">
+                  <Brain className="h-3.5 w-3.5 text-purple-500" />
+                  Override Log
+                </CardTitle>
+              </CardHeader>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-zinc-100 bg-zinc-50">
+                      <th className="px-4 py-2 text-left font-medium text-zinc-500">Date</th>
+                      <th className="px-4 py-2 text-left font-medium text-zinc-500">Match</th>
+                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Model Pred</th>
+                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Your Pred</th>
+                      <th className="px-4 py-2 text-left font-medium text-zinc-500">Comment</th>
+                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Actual</th>
+                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Who Won</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {humanRows.map(row => {
+                      const whoWon = row.humanCorrect && row.modelCorrect
+                        ? 'both'
+                        : row.humanCorrect
+                        ? 'you'
+                        : row.modelCorrect
+                        ? 'model'
+                        : 'neither'
+                      return (
+                        <tr key={row.fixtureId} className="border-b border-zinc-50">
+                          <td className="px-4 py-2.5 text-zinc-400 whitespace-nowrap">{formatDate(row.date)}</td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-1">
+                              <span>{row.homeTeam.flag_url}</span>
+                              <span className="font-medium text-zinc-900">{row.homeTeam.code}</span>
+                              <span className="text-zinc-300">vs</span>
+                              <span className="font-medium text-zinc-900">{row.awayTeam.code}</span>
+                              <span>{row.awayTeam.flag_url}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-center font-mono text-zinc-500">
+                            {row.modelHome.toFixed(1)}–{row.modelAway.toFixed(1)}
+                          </td>
+                          <td className="px-4 py-2.5 text-center font-mono font-semibold text-blue-600">
+                            {row.humanHome}–{row.humanAway}
+                          </td>
+                          <td className="px-4 py-2.5 text-zinc-500 max-w-[150px] truncate">
+                            {row.comment || <span className="italic text-zinc-300">—</span>}
+                          </td>
+                          <td className="px-4 py-2.5 text-center font-mono font-bold text-zinc-900">
+                            {row.actualHome}–{row.actualAway}
+                          </td>
+                          <td className="px-4 py-2.5 text-center">
+                            {whoWon === 'both' && <Badge variant="outline" className="text-green-600 border-green-300">Both</Badge>}
+                            {whoWon === 'you' && <Badge variant="outline" className="text-blue-600 border-blue-300">You ⚡</Badge>}
+                            {whoWon === 'model' && <Badge variant="outline" className="text-zinc-600">Model</Badge>}
+                            {whoWon === 'neither' && <Badge variant="outline" className="text-red-500 border-red-200">Neither</Badge>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </>
+        )
+      })()}
+
+      {/* Section C: What the model learned from you (Model D) */}
+      {(() => {
+        const biases = computeHumanBiases()
+        const biasEntries = Object.entries(biases)
+
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-1.5">
+                <Brain className="h-3.5 w-3.5 text-indigo-500" />
+                What the model learned from you (Model D)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {biasEntries.length === 0 ? (
+                <p className="text-xs text-zinc-400 italic">
+                  Make your first override to start training Model D
+                </p>
+              ) : (
+                <>
+                  <p className="text-xs text-zinc-500 mb-3">
+                    Model D applies these corrections on top of Model B based on your override history.
+                  </p>
+                  <div className="space-y-2">
+                    {biasEntries.map(([teamId, delta]) => {
+                      const team = teamMap[teamId]
+                      return (
+                        <div key={teamId} className="flex items-center gap-3">
+                          <span className="text-sm">{team?.flag_url}</span>
+                          <span className="text-xs font-medium text-zinc-900 w-28 truncate">{team?.name ?? teamId}</span>
+                          <div className="flex-1 flex items-center gap-2">
+                            <div className="flex-1 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${delta > 0 ? 'bg-blue-400' : 'bg-red-400'}`}
+                                style={{ width: `${Math.min(100, Math.abs(delta) * 50)}%`, marginLeft: delta < 0 ? 'auto' : undefined }}
+                              />
+                            </div>
+                            <span className={`text-xs font-semibold tabular-nums w-12 text-right ${delta > 0 ? 'text-blue-600' : 'text-red-500'}`}>
+                              {delta > 0 ? '+' : ''}{delta.toFixed(2)} goals
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })()}
     </div>
   )
 }
