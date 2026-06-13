@@ -158,7 +158,7 @@ function ResultRow({
           onCancel={() => setShowConfirm(false)}
         />
       )}
-      <div className={`border-b border-zinc-100 px-4 py-3 last:border-0 transition-colors ${isSaved ? 'bg-zinc-50 opacity-80' : ''}`}>
+      <div className={`border-b border-zinc-100 px-4 py-3 last:border-0 transition-colors ${isSaved ? 'bg-green-50/50' : ''}`}>
         {/* Match header */}
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <span className="text-xs text-zinc-400 shrink-0">{formatDate(fixture.kickoff_utc)} {formatTime(fixture.kickoff_utc)}</span>
@@ -211,7 +211,7 @@ function ResultRow({
           <div className="shrink-0">
             <div className="text-xs text-zinc-400 mb-1">Predicted</div>
             <div className="flex items-center gap-1.5">
-              <span className={`text-sm font-bold ${isLocked || isSaved ? 'text-zinc-900' : 'text-zinc-400'}`}>
+              <span className={`text-sm font-bold ${isSaved ? 'text-zinc-500' : isLocked ? 'text-zinc-900' : 'text-zinc-400'}`}>
                 {displayPred ? `${goals(displayPred.home_goals)} – ${goals(displayPred.away_goals)}` : '—'}
               </span>
               {!isLocked && !isSaved && livePred && (
@@ -232,12 +232,13 @@ function ResultRow({
             <div className="text-xs text-zinc-400 mb-1">Actual result</div>
             {isSaved ? (
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-green-700">
+                <span className="rounded bg-green-100 px-2.5 py-1 text-sm font-bold text-green-800 tabular-nums">
                   {savedResult!.home} – {savedResult!.away}
                 </span>
+                <span className="text-xs text-zinc-400">final</span>
                 <button
                   onClick={handleDeleteResult}
-                  className="text-zinc-300 hover:text-red-400"
+                  className="text-zinc-200 hover:text-red-400"
                   title="Delete result"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
