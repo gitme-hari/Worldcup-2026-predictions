@@ -4,7 +4,7 @@
 
 import { SEED_TEAMS, SEED_FIXTURES, SEED_PREDICTIONS } from './seed-data'
 import type { SeedTeam, SeedFixture, SeedPrediction } from './seed-data'
-import type { ActualResult, Override, ModelConfig, BonusPrediction, ModelMetric } from './types'
+import type { ActualResult, Override, ModelConfig, BonusPrediction, ModelMetric, HumanPrediction } from './types'
 import { brierScore, logLoss, getOutcome } from './models'
 
 const KEYS = {
@@ -15,6 +15,7 @@ const KEYS = {
   bracketOverrides: 'wc26_bracket_overrides',
   liveData: 'wc26_live_data',
   lockedPreds: 'wc26_locked_preds',
+  humanPreds: 'wc26_human_preds',
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -301,6 +302,68 @@ export function saveLockPrediction(pred: Omit<LockedPrediction, 'locked_at'>) {
 
 export function deleteLockedPrediction(fixtureId: string) {
   save(KEYS.lockedPreds, getLockedPredictions().filter(p => p.fixture_id !== fixtureId))
+}
+
+// --- Human Predictions ---
+export function getHumanPredictions(): HumanPrediction[] {
+  return load<HumanPrediction[]>(KEYS.humanPreds, [])
+}
+
+export function getHumanPrediction(fixtureId: string): HumanPrediction | undefined {
+  return getHumanPredictions().find(p => p.fixture_id === fixtureId)
+}
+
+export function saveHumanPrediction(pred: Omit<HumanPrediction, 'id' | 'created_at'>) {
+  const preds = getHumanPredictions()
+  const idx = preds.findIndex(p => p.fixture_id === pred.fixture_id)
+  const full: HumanPrediction = {
+    id: `human-${pred.fixture_id}`,
+    ...pred,
+    created_at: new Date().toISOString(),
+  }
+  if (idx >= 0) preds[idx] = full
+  else preds.push(full)
+  save(KEYS.humanPreds, preds)
+}
+
+export function deleteHumanPrediction(fixtureId: string) {
+  save(KEYS.humanPreds, getHumanPredictions().filter(p => p.fixture_id !== fixtureId))
+}
+
+// Returns per-team bias corrections learned from human overrides
+// For each team the user consistently over/under-predicted vs model,
+// compute an average delta that can be used as a Model D adjustment
+export function computeHumanBiases(): Record<string, number> {
+  const humanPreds = getHumanPredictions()
+  const lockedPreds = getLockedPredictions()
+  const fixtures = getFixtures()
+
+  const teamDeltas: Record<string, number[]> = {}
+
+  for (const hp of humanPreds) {
+    const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+    if (!locked) continue
+    const fixture = fixtures.find(f => f.id === hp.fixture_id)
+    if (!fixture) continue
+
+    const homeDelta = hp.home_goals - locked.home_goals
+    const awayDelta = hp.away_goals - locked.away_goals
+
+    if (!teamDeltas[fixture.home_team_id]) teamDeltas[fixture.home_team_id] = []
+    teamDeltas[fixture.home_team_id].push(homeDelta)
+
+    if (!teamDeltas[fixture.away_team_id]) teamDeltas[fixture.away_team_id] = []
+    teamDeltas[fixture.away_team_id].push(awayDelta)
+  }
+
+  const biases: Record<string, number> = {}
+  for (const [teamId, deltas] of Object.entries(teamDeltas)) {
+    const avg = deltas.reduce((s, d) => s + d, 0) / deltas.length
+    if (Math.abs(avg) > 0.01) {
+      biases[teamId] = Math.round(avg * 100) / 100
+    }
+  }
+  return biases
 }
 
 export function getBestModel(): 'A' | 'B' | 'C' | null {

@@ -3,13 +3,14 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   getFixtures, getTeams, getResult, saveResult, deleteResult,
   getPredictions, getConfig, getLockedPrediction, saveLockPrediction, deleteLockedPrediction,
+  getHumanPrediction, saveHumanPrediction,
 } from '@/lib/store'
 import { getEffectivePrediction } from '@/lib/models'
 import { formatDate, formatTime, goals, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Lock, Unlock, Trash2, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { Lock, Unlock, Trash2, CheckCircle2, AlertTriangle, XCircle, Zap } from 'lucide-react'
 import type { SeedFixture } from '@/lib/seed-data'
 import type { ModelKey } from '@/lib/types'
 
@@ -17,6 +18,7 @@ const MODEL_OPTIONS: { value: ModelKey; label: string }[] = [
   { value: 'A', label: 'Model A (Poisson)' },
   { value: 'B', label: 'Model B (ML)' },
   { value: 'C', label: 'Model C (Live)' },
+  { value: 'D', label: 'Model D (Human)' },
   { value: 'hybrid', label: 'Hybrid' },
 ]
 
@@ -77,6 +79,16 @@ function ResultRow({
     existing ? { home: existing.home_goals, away: existing.away_goals } : null
   )
 
+  // Human prediction state
+  const existingHuman = getHumanPrediction(fixture.id)
+  const [showOverride, setShowOverride] = useState(false)
+  const [humanHome, setHumanHome] = useState(String(existingHuman?.home_goals ?? ''))
+  const [humanAway, setHumanAway] = useState(String(existingHuman?.away_goals ?? ''))
+  const [humanComment, setHumanComment] = useState(existingHuman?.comment ?? '')
+  const [humanPred, setHumanPred] = useState<{ home: number; away: number; comment: string } | null>(
+    existingHuman ? { home: existingHuman.home_goals, away: existingHuman.away_goals, comment: existingHuman.comment } : null
+  )
+
   const livePred = getEffectivePrediction(predictions as any, fixture.id, selectedModel, {
     a: config.weight_a, b: config.weight_b, c: config.weight_c,
   })
@@ -121,9 +133,28 @@ function ResultRow({
     }
     saveResult({ fixture_id: fixture.id, home_goals: h, away_goals: a })
     setSavedResult({ home: h, away: a })
+
+    // Save human prediction if override differs from model prediction
+    const locked2 = getLockedPrediction(fixture.id) ?? livePred
+    if (locked2) {
+      const modelHome = Math.round(locked2.home_goals)
+      const modelAway = Math.round(locked2.away_goals)
+      const hh = parseInt(humanHome, 10)
+      const ha = parseInt(humanAway, 10)
+      if (!isNaN(hh) && !isNaN(ha) && (hh !== modelHome || ha !== modelAway)) {
+        saveHumanPrediction({
+          fixture_id: fixture.id,
+          home_goals: hh,
+          away_goals: ha,
+          comment: humanComment,
+        })
+        setHumanPred({ home: hh, away: ha, comment: humanComment })
+      }
+    }
+
     setShowConfirm(false)
     onSaved(fixture.id)
-  }, [homeActual, awayActual, isLocked, livePred, selectedModel, fixture.id, onSaved])
+  }, [homeActual, awayActual, humanHome, humanAway, humanComment, isLocked, livePred, selectedModel, fixture.id, onSaved])
 
   const handleSaveClick = () => {
     const h = parseInt(homeActual, 10)
@@ -211,19 +242,90 @@ function ResultRow({
           <div className="shrink-0">
             <div className="text-xs text-zinc-400 mb-1">Predicted</div>
             <div className="flex items-center gap-1.5">
-              <span className={`text-sm font-bold ${isSaved ? 'text-zinc-500' : isLocked ? 'text-zinc-900' : 'text-zinc-400'}`}>
-                {displayPred ? `${goals(displayPred.home_goals)} – ${goals(displayPred.away_goals)}` : '—'}
-              </span>
-              {!isLocked && !isSaved && livePred && (
-                <button
-                  onClick={handleLock}
-                  className="flex items-center gap-1 rounded border border-zinc-200 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
-                >
-                  <Lock className="h-3 w-3" /> Lock
-                </button>
+              {isSaved ? (
+                <>
+                  <span className={`text-sm font-bold text-zinc-500 ${savedResult && displayPred && (() => { const po = displayPred.home_goals > displayPred.away_goals ? 'H' : displayPred.away_goals > displayPred.home_goals ? 'A' : 'D'; const ao = savedResult.home > savedResult.away ? 'H' : savedResult.away > savedResult.home ? 'A' : 'D'; return po === ao })() ? '' : 'line-through opacity-50'}`}>
+                    {displayPred ? `${goals(displayPred.home_goals)} – ${goals(displayPred.away_goals)}` : '—'}
+                  </span>
+                  {displayPred && savedResult && (() => { const po = displayPred.home_goals > displayPred.away_goals ? 'H' : displayPred.away_goals > displayPred.home_goals ? 'A' : 'D'; const ao = savedResult.home > savedResult.away ? 'H' : savedResult.away > savedResult.home ? 'A' : 'D'; return po === ao })()
+                    ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                    : <XCircle className="h-3.5 w-3.5 text-red-400" />}
+                </>
+              ) : (
+                <>
+                  <span className={`text-sm font-bold ${isLocked ? 'text-zinc-900' : 'text-zinc-400'}`}>
+                    {displayPred ? `${goals(displayPred.home_goals)} – ${goals(displayPred.away_goals)}` : '—'}
+                  </span>
+                  {!isLocked && !isSaved && livePred && (
+                    <button
+                      onClick={handleLock}
+                      className="flex items-center gap-1 rounded border border-zinc-200 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
+                    >
+                      <Lock className="h-3 w-3" /> Lock
+                    </button>
+                  )}
+                  {isLocked && !isSaved && (
+                    <button
+                      onClick={() => setShowOverride(v => !v)}
+                      className="flex items-center gap-1 rounded border border-blue-200 px-2 py-0.5 text-xs text-blue-500 hover:bg-blue-50"
+                      title="Override prediction"
+                    >
+                      Override ✏️
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
+
+          {/* Your Prediction column */}
+          {(isLocked || isSaved) && (
+            <div className="shrink-0">
+              <div className="text-xs text-zinc-400 mb-1">Your Prediction</div>
+              {isSaved ? (
+                humanPred ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-sm font-bold text-blue-600 ${savedResult && (() => { const ho = humanPred.home > humanPred.away ? 'H' : humanPred.away > humanPred.home ? 'A' : 'D'; const ao = savedResult.home > savedResult.away ? 'H' : savedResult.away > savedResult.home ? 'A' : 'D'; return ho === ao })() ? '' : 'line-through opacity-50'}`}>
+                      {humanPred.home} – {humanPred.away}
+                    </span>
+                    <Zap className="h-3.5 w-3.5 text-blue-400" aria-label="Human override" />
+                    {savedResult && (() => { const ho = humanPred.home > humanPred.away ? 'H' : humanPred.away > humanPred.home ? 'A' : 'D'; const ao = savedResult.home > savedResult.away ? 'H' : savedResult.away > savedResult.home ? 'A' : 'D'; return ho === ao })()
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                      : <XCircle className="h-3.5 w-3.5 text-red-400" />}
+                  </div>
+                ) : (
+                  <span className="text-xs text-zinc-400 italic">Accepted model</span>
+                )
+              ) : showOverride ? (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number" min="0" max="20" value={humanHome}
+                      onChange={e => setHumanHome(e.target.value)}
+                      placeholder="0"
+                      className="w-12 rounded border border-blue-300 px-2 py-1 text-center text-sm font-bold focus:border-blue-500 focus:outline-none"
+                    />
+                    <span className="text-zinc-400 text-sm">–</span>
+                    <input
+                      type="number" min="0" max="20" value={humanAway}
+                      onChange={e => setHumanAway(e.target.value)}
+                      placeholder="0"
+                      className="w-12 rounded border border-blue-300 px-2 py-1 text-center text-sm font-bold focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    value={humanComment}
+                    onChange={e => setHumanComment(e.target.value)}
+                    placeholder="Why are you overriding?"
+                    className="rounded border border-zinc-200 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none w-48"
+                  />
+                </div>
+              ) : (
+                <span className="text-xs text-zinc-400 italic">No override</span>
+              )}
+            </div>
+          )}
 
           <div className="text-zinc-200 text-lg shrink-0 hidden sm:block">│</div>
 

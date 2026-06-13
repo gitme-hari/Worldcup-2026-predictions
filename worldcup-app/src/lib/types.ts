@@ -1,4 +1,4 @@
-export type ModelKey = 'A' | 'B' | 'C' | 'hybrid'
+export type ModelKey = 'A' | 'B' | 'C' | 'D' | 'hybrid'
 export type Stage = 'group' | 'r32' | 'r16' | 'qf' | 'sf' | 'final'
 export type Role = 'admin' | 'viewer'
 
@@ -98,6 +98,15 @@ export interface GroupStanding {
   ga: number
   gd: number
   points: number
+}
+
+export interface HumanPrediction {
+  id: string
+  fixture_id: string
+  home_goals: number
+  away_goals: number
+  comment: string
+  created_at: string
 }
 
 export interface HybridPrediction {
