@@ -192,11 +192,21 @@ export function saveResult(result: Omit<ActualResult, 'id' | 'entered_at'>) {
   if (existing >= 0) results[existing] = full
   else results.push(full)
   save(KEYS.results, results)
+  if (typeof window !== 'undefined') {
+    import('./sync').then(({ syncResult }) => {
+      syncResult(result.fixture_id, result.home_goals, result.away_goals)
+    })
+  }
 }
 
 export function deleteResult(fixtureId: string) {
   const results = getResults().filter(r => r.fixture_id !== fixtureId)
   save(KEYS.results, results)
+  if (typeof window !== 'undefined') {
+    import('./sync').then(({ deleteResultFromCloud }) => {
+      deleteResultFromCloud(fixtureId)
+    })
+  }
 }
 
 // --- Score Overrides ---
@@ -338,10 +348,20 @@ export function saveLockPrediction(pred: Omit<LockedPrediction, 'locked_at'>) {
   if (idx >= 0) preds[idx] = full
   else preds.push(full)
   save(KEYS.lockedPreds, preds)
+  if (typeof window !== 'undefined') {
+    import('./sync').then(({ syncLockedPred }) => {
+      syncLockedPred(pred)
+    })
+  }
 }
 
 export function deleteLockedPrediction(fixtureId: string) {
   save(KEYS.lockedPreds, getLockedPredictions().filter(p => p.fixture_id !== fixtureId))
+  if (typeof window !== 'undefined') {
+    import('./sync').then(({ deleteLockedPredFromCloud }) => {
+      deleteLockedPredFromCloud(fixtureId)
+    })
+  }
 }
 
 // --- Human Predictions ---
@@ -364,6 +384,11 @@ export function saveHumanPrediction(pred: Omit<HumanPrediction, 'id' | 'created_
   if (idx >= 0) preds[idx] = full
   else preds.push(full)
   save(KEYS.humanPreds, preds)
+  if (typeof window !== 'undefined') {
+    import('./sync').then(({ syncHumanPred }) => {
+      syncHumanPred({ fixture_id: pred.fixture_id, home_goals: pred.home_goals, away_goals: pred.away_goals, comment: pred.comment })
+    })
+  }
 }
 
 export function deleteHumanPrediction(fixtureId: string) {

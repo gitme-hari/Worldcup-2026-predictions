@@ -348,6 +348,12 @@ export function ResultsEntry() {
 
   useEffect(() => setMounted(true), [])
 
+  useEffect(() => {
+    const handler = () => setRev(r => r + 1)
+    window.addEventListener('supabase-sync-complete', handler)
+    return () => window.removeEventListener('supabase-sync-complete', handler)
+  }, [])
+
   const handleResultChange = useCallback(() => setRev(r => r + 1), [])
 
   if (!mounted) return <div className="h-96 animate-pulse rounded-lg bg-zinc-100" />
