@@ -16,6 +16,7 @@ const KEYS = {
   liveData: 'wc26_live_data',
   lockedPreds: 'wc26_locked_preds',
   humanPreds: 'wc26_human_preds',
+  tabpfnPreds: 'wc26_tabpfn_preds',
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -78,41 +79,80 @@ export async function fetchLiveData(): Promise<LiveData> {
 // --- Predictions ---
 export function getPredictions(): SeedPrediction[] {
   const liveData = getLiveData()
+  let basePreds: SeedPrediction[]
+
   if (!liveData || Object.keys(liveData.teamAdjustments).length === 0) {
-    return SEED_PREDICTIONS
+    basePreds = SEED_PREDICTIONS
+  } else {
+    basePreds = SEED_PREDICTIONS.map(pred => {
+      if (pred.model !== 'C') return pred
+
+      const fixture = SEED_FIXTURES.find(f => f.id === pred.fixture_id)
+      if (!fixture) return pred
+
+      const homeAdj = liveData.teamAdjustments[fixture.home_team_id] ?? 0
+      const awayAdj = liveData.teamAdjustments[fixture.away_team_id] ?? 0
+      const net = homeAdj - awayAdj
+      if (Math.abs(net) < 0.01) return pred
+
+      const newHW = Math.max(0.03, Math.min(0.93, pred.home_win_prob + net * 0.5))
+      const newAW = Math.max(0.03, Math.min(0.93, pred.away_win_prob - net * 0.5))
+      const newD = Math.max(0.03, 1 - newHW - newAW)
+      const tot = newHW + newD + newAW
+
+      return {
+        ...pred,
+        home_goals: Math.max(0.1, Math.round(pred.home_goals * (1 + homeAdj * 0.4) * 10) / 10),
+        away_goals: Math.max(0.1, Math.round(pred.away_goals * (1 + awayAdj * 0.4) * 10) / 10),
+        home_win_prob: Math.round((newHW / tot) * 100) / 100,
+        draw_prob: Math.round((newD / tot) * 100) / 100,
+        away_win_prob: Math.round((newAW / tot) * 100) / 100,
+      }
+    })
   }
 
-  const teamMap = Object.fromEntries(SEED_TEAMS.map(t => [t.id, t]))
-
-  return SEED_PREDICTIONS.map(pred => {
-    if (pred.model !== 'C') return pred
-
-    const fixture = SEED_FIXTURES.find(f => f.id === pred.fixture_id)
-    if (!fixture) return pred
-
-    const homeAdj = liveData.teamAdjustments[fixture.home_team_id] ?? 0
-    const awayAdj = liveData.teamAdjustments[fixture.away_team_id] ?? 0
-    const net = homeAdj - awayAdj
-    if (Math.abs(net) < 0.01) return pred
-
-    const newHW = Math.max(0.03, Math.min(0.93, pred.home_win_prob + net * 0.5))
-    const newAW = Math.max(0.03, Math.min(0.93, pred.away_win_prob - net * 0.5))
-    const newD = Math.max(0.03, 1 - newHW - newAW)
-    const tot = newHW + newD + newAW
-
-    return {
-      ...pred,
-      home_goals: Math.max(0.1, Math.round(pred.home_goals * (1 + homeAdj * 0.4) * 10) / 10),
-      away_goals: Math.max(0.1, Math.round(pred.away_goals * (1 + awayAdj * 0.4) * 10) / 10),
-      home_win_prob: Math.round((newHW / tot) * 100) / 100,
-      draw_prob: Math.round((newD / tot) * 100) / 100,
-      away_win_prob: Math.round((newAW / tot) * 100) / 100,
+  // Client-side only: overlay TabPFN predictions on Model C
+  if (typeof window !== 'undefined') {
+    const tabpfnPreds = getTabPFNPredictions()
+    if (tabpfnPreds.length > 0) {
+      const tabpfnMap = Object.fromEntries(tabpfnPreds.map(p => [p.fixture_id, p]))
+      return basePreds.map(pred => {
+        if (pred.model !== 'C') return pred
+        const tp = tabpfnMap[pred.fixture_id]
+        if (!tp) return pred
+        return {
+          ...pred,
+          home_win_prob: tp.home_win_prob,
+          draw_prob: tp.draw_prob,
+          away_win_prob: tp.away_win_prob,
+        }
+      })
     }
-  })
+  }
+
+  return basePreds
 }
 
 export function getPredictionsForFixture(fixtureId: string): SeedPrediction[] {
   return getPredictions().filter(p => p.fixture_id === fixtureId)
+}
+
+// --- TabPFN Predictions ---
+export interface TabPFNPrediction {
+  fixture_id: string
+  home_win_prob: number
+  draw_prob: number
+  away_win_prob: number
+  fetched_at: string
+}
+
+export function getTabPFNPredictions(): TabPFNPrediction[] {
+  return load<TabPFNPrediction[]>(KEYS.tabpfnPreds, [])
+}
+
+export function saveTabPFNPredictions(preds: Omit<TabPFNPrediction, 'fetched_at'>[]) {
+  const now = new Date().toISOString()
+  save(KEYS.tabpfnPreds, preds.map(p => ({ ...p, fetched_at: now })))
 }
 
 // --- Config ---
