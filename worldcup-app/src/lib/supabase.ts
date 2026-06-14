@@ -1,11 +1,24 @@
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+let _client: SupabaseClient | null = null
 
-export const supabase = createBrowserClient(url, anonKey)
+function getClient(): SupabaseClient {
+  if (!_client) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+    _client = createClient(url, anonKey)
+  }
+  return _client
+}
 
-export function createServerClient() {
-  const { createClient } = require('@supabase/supabase-js')
-  return createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+// Proxy that lazily initialises the client on first use
+export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
+  get(_target, prop) {
+    return (getClient() as unknown as Record<string | symbol, unknown>)[prop]
+  },
+})
+
+export function createServerClient(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+  return createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY ?? '')
 }
