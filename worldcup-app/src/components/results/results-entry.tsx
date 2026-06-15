@@ -6,13 +6,14 @@ import {
   getHumanPrediction, saveHumanPrediction,
 } from '@/lib/store'
 import { getEffectivePrediction } from '@/lib/models'
-import { formatDate, formatTime, goals, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
+import { formatDate, formatTime, goals, goalsDisplay, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Lock, Unlock, Trash2, CheckCircle2, AlertTriangle, XCircle, Zap } from 'lucide-react'
 import type { SeedFixture } from '@/lib/seed-data'
 import type { ModelKey } from '@/lib/types'
+import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
 
 const MODEL_OPTIONS: { value: ModelKey; label: string }[] = [
   { value: 'A', label: 'Model A (Poisson)' },
@@ -231,7 +232,7 @@ function ResultRow({
               {isSaved && existing ? (
                 <>
                   <span className={`text-sm font-bold ${outcome(displayPred?.home_goals ?? 0, displayPred?.away_goals ?? 0) === outcome(existing.home_goals, existing.away_goals) ? 'text-zinc-700' : 'text-zinc-400 line-through'}`}>
-                    {displayPred ? `${goals(displayPred.home_goals)} – ${goals(displayPred.away_goals)}` : '—'}
+                    {displayPred ? `${goalsDisplay(displayPred.home_goals)} – ${goalsDisplay(displayPred.away_goals)}` : '—'}
                   </span>
                   {displayPred && (outcome(displayPred.home_goals, displayPred.away_goals) === outcome(existing.home_goals, existing.away_goals)
                     ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
@@ -240,7 +241,7 @@ function ResultRow({
               ) : (
                 <>
                   <span className={`text-sm font-bold ${isLocked ? 'text-zinc-900' : 'text-zinc-400'}`}>
-                    {displayPred ? `${goals(displayPred.home_goals)} – ${goals(displayPred.away_goals)}` : '—'}
+                    {displayPred ? `${goalsDisplay(displayPred.home_goals)} – ${goalsDisplay(displayPred.away_goals)}` : '—'}
                   </span>
                   {!isLocked && livePred && (
                     <button onClick={handleLock} className="flex items-center gap-1 rounded border border-zinc-200 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900">
@@ -348,6 +349,12 @@ export function ResultsEntry() {
 
   useEffect(() => setMounted(true), [])
 
+  useEffect(() => {
+    const handler = () => setRev(r => r + 1)
+    window.addEventListener('supabase-sync-complete', handler)
+    return () => window.removeEventListener('supabase-sync-complete', handler)
+  }, [])
+
   const handleResultChange = useCallback(() => setRev(r => r + 1), [])
 
   if (!mounted) return <div className="h-96 animate-pulse rounded-lg bg-zinc-100" />
@@ -368,6 +375,7 @@ export function ResultsEntry() {
 
   return (
     <div className="space-y-4">
+      <SyncErrorBanner />
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5 rounded border border-zinc-200 p-0.5">
           {(['all', 'pending', 'entered'] as const).map(f => (

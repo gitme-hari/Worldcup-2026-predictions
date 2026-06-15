@@ -6,6 +6,7 @@ import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { TrendingUp, Target, CheckCircle, XCircle, Minus, Brain, Zap } from 'lucide-react'
+import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
 
 interface MatchAnalysis {
   fixtureId: string
@@ -114,6 +115,7 @@ export function AnalysisPanel() {
 
   return (
     <div className="space-y-4">
+      <SyncErrorBanner />
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Card>

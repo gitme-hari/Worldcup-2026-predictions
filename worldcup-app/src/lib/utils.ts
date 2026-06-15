@@ -23,6 +23,12 @@ export function goals(g: number) {
   return String(Math.round(g))
 }
 
+// Shows "2.3 (2)" for decimal predictions so the raw value is visible alongside the rounded one
+export function goalsDisplay(g: number) {
+  const rounded = Math.round(g)
+  return g === rounded ? String(rounded) : `${g} (${rounded})`
+}
+
 export const MODEL_LABELS: Record<string, string> = {
   A: 'Model A (Poisson)',
   B: 'Model B (ML)',
