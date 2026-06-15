@@ -6,7 +6,7 @@ import {
   getHumanPrediction, saveHumanPrediction, computeCalibration,
 } from '@/lib/store'
 import { getEffectivePrediction } from '@/lib/models'
-import { formatDate, formatTime, goals, goalsDisplay, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
+import { formatDate, formatTime, goalsDisplay, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -27,7 +27,7 @@ function ConfirmDialog({
   homeTeam, awayTeam, homeGoals, awayGoals,
   onConfirm, onCancel,
 }: {
-  homeTeam: string; awayTeam: string; homeGoals: string; awayGoals: string
+  homeTeam: string; awayTeam: string; homeGoals: number; awayGoals: number
   onConfirm: () => void; onCancel: () => void
 }) {
   return (
@@ -46,6 +46,85 @@ function ConfirmDialog({
         <div className="flex gap-2 justify-end">
           <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
           <Button size="sm" variant="primary" onClick={onConfirm}>Yes, save result</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ScoreStepper({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      <button onClick={() => onChange(Math.max(0, value - 1))}
+        className="h-7 w-7 rounded border border-zinc-300 text-sm font-bold text-zinc-600 hover:bg-zinc-100 active:bg-zinc-200">−</button>
+      <span className="w-6 text-center text-sm font-bold tabular-nums text-zinc-900">{value}</span>
+      <button onClick={() => onChange(Math.min(20, value + 1))}
+        className="h-7 w-7 rounded border border-zinc-300 text-sm font-bold text-zinc-600 hover:bg-zinc-100 active:bg-zinc-200">+</button>
+    </div>
+  )
+}
+
+type PickSource = 'raw' | 'calibrated' | 'custom'
+
+function PickSheet({ homeTeam, awayTeam, rawHome, rawAway, calHome, calAway, onConfirm, onCancel }: {
+  homeTeam: string; awayTeam: string
+  rawHome: number; rawAway: number
+  calHome: number | null; calAway: number | null
+  onConfirm: (homeGoals: number, awayGoals: number, source: PickSource) => void
+  onCancel: () => void
+}) {
+  const [pick, setPick] = useState<PickSource>(calHome !== null ? 'calibrated' : 'raw')
+  const [customHome, setCustomHome] = useState(Math.round(rawHome))
+  const [customAway, setCustomAway] = useState(Math.round(rawAway))
+
+  const options: { value: PickSource; label: string; home: number; away: number; available: boolean }[] = [
+    { value: 'raw', label: 'Raw prediction', home: rawHome, away: rawAway, available: true },
+    { value: 'calibrated', label: 'Calibrated', home: calHome ?? 0, away: calAway ?? 0, available: calHome !== null },
+    { value: 'custom', label: 'Custom', home: customHome, away: customAway, available: true },
+  ]
+
+  const selected = options.find(o => o.value === pick)!
+
+  function handleConfirm() {
+    const h = pick === 'custom' ? customHome : Math.round(selected.home)
+    const a = pick === 'custom' ? customAway : Math.round(selected.away)
+    onConfirm(h, a, pick)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={onCancel}>
+      <div className="w-full max-w-sm rounded-t-2xl sm:rounded-xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+        <p className="text-sm font-semibold text-zinc-900 mb-1">Choose your scoreline</p>
+        <p className="text-xs text-zinc-500 mb-4">{homeTeam} vs {awayTeam}</p>
+        <div className="space-y-2 mb-4">
+          {options.filter(o => o.available).map(opt => (
+            <label key={opt.value} className={`flex items-center justify-between rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${pick === opt.value ? 'border-blue-400 bg-blue-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
+              <div className="flex items-center gap-2.5">
+                <input type="radio" name="pick" value={opt.value} checked={pick === opt.value} onChange={() => setPick(opt.value)} className="accent-blue-500" />
+                <div>
+                  <div className="text-xs font-medium text-zinc-700">{opt.label}</div>
+                  {opt.value === 'calibrated' && <div className="text-xs text-zinc-400">Adjusted from past results</div>}
+                  {opt.value === 'raw' && <div className="text-xs text-zinc-400">Direct model output</div>}
+                </div>
+              </div>
+              {opt.value === 'custom' && pick === 'custom' ? (
+                <div className="flex items-center gap-1.5">
+                  <ScoreStepper value={customHome} onChange={setCustomHome} />
+                  <span className="text-zinc-400 text-sm">–</span>
+                  <ScoreStepper value={customAway} onChange={setCustomAway} />
+                </div>
+              ) : (
+                <span className="font-mono font-bold text-zinc-800 text-sm">
+                  {Math.round(opt.home)} – {Math.round(opt.away)}
+                  <span className="ml-1 text-xs font-normal text-zinc-400">({opt.home.toFixed(1)}–{opt.away.toFixed(1)})</span>
+                </span>
+              )}
+            </label>
+          ))}
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onCancel} className="rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50">Cancel</button>
+          <button onClick={handleConfirm} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Lock this pick</button>
         </div>
       </div>
     </div>
@@ -81,9 +160,10 @@ function ResultRow({
   const [selectedModel, setSelectedModel] = useState<ModelKey>(
     (locked?.model as ModelKey) ?? config.active_model
   )
-  const [homeActual, setHomeActual] = useState(String(existing?.home_goals ?? '0'))
-  const [awayActual, setAwayActual] = useState(String(existing?.away_goals ?? '0'))
+  const [homeActual, setHomeActual] = useState(existing?.home_goals ?? 0)
+  const [awayActual, setAwayActual] = useState(existing?.away_goals ?? 0)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [showPickSheet, setShowPickSheet] = useState(false)
   const [showOverride, setShowOverride] = useState(false)
   const [humanHome, setHumanHome] = useState(String(humanExist?.home_goals ?? ''))
   const [humanAway, setHumanAway] = useState(String(humanExist?.away_goals ?? ''))
@@ -103,15 +183,22 @@ function ResultRow({
 
   const handleLock = useCallback(() => {
     if (!livePred) return
+    setShowPickSheet(true)
+  }, [livePred])
+
+  const handlePickConfirm = useCallback((homeGoals: number, awayGoals: number, source: PickSource) => {
+    if (!livePred) return
     saveLockPrediction({
       fixture_id: fixture.id,
       model: selectedModel,
-      home_goals: livePred.home_goals,
-      away_goals: livePred.away_goals,
+      home_goals: homeGoals,
+      away_goals: awayGoals,
       home_win_prob: livePred.home_win_prob,
       draw_prob: livePred.draw_prob,
       away_win_prob: livePred.away_win_prob,
+      pick_source: source,
     })
+    setShowPickSheet(false)
     onResultChange()
   }, [fixture.id, selectedModel, livePred, onResultChange])
 
@@ -121,10 +208,6 @@ function ResultRow({
   }
 
   const commitSave = useCallback(() => {
-    const h = parseInt(homeActual, 10)
-    const a = parseInt(awayActual, 10)
-    if (isNaN(h) || isNaN(a) || h < 0 || a < 0) return
-
     // Auto-lock if not already locked
     if (!locked && livePred) {
       saveLockPrediction({
@@ -135,13 +218,12 @@ function ResultRow({
         home_win_prob: livePred.home_win_prob,
         draw_prob: livePred.draw_prob,
         away_win_prob: livePred.away_win_prob,
+        pick_source: 'raw',
       })
     }
 
-    // Save actual result
-    saveResult({ fixture_id: fixture.id, home_goals: h, away_goals: a })
+    saveResult({ fixture_id: fixture.id, home_goals: homeActual, away_goals: awayActual })
 
-    // Save human prediction if it differs from the locked model prediction
     const finalLocked = getLockedPrediction(fixture.id) ?? livePred
     if (finalLocked) {
       const hh = parseInt(humanHome, 10)
@@ -152,15 +234,15 @@ function ResultRow({
     }
 
     setShowConfirm(false)
-    onResultChange() // triggers parent re-render → existing/locked re-read from localStorage
+    onResultChange()
   }, [homeActual, awayActual, humanHome, humanAway, humanComment, locked, livePred, selectedModel, fixture.id, onResultChange])
 
   const handleDeleteResult = () => {
     if (!window.confirm('Delete this result? The prediction lock will also be removed.')) return
     deleteResult(fixture.id)
     deleteLockedPrediction(fixture.id)
-    setHomeActual('0')
-    setAwayActual('0')
+    setHomeActual(0)
+    setAwayActual(0)
     onResultChange()
   }
 
@@ -180,6 +262,18 @@ function ResultRow({
           awayGoals={awayActual}
           onConfirm={commitSave}
           onCancel={() => setShowConfirm(false)}
+        />
+      )}
+      {showPickSheet && livePred && (
+        <PickSheet
+          homeTeam={homeTeam?.name ?? ''}
+          awayTeam={awayTeam?.name ?? ''}
+          rawHome={livePred.home_goals}
+          rawAway={livePred.away_goals}
+          calHome={calPred?.home_goals ?? null}
+          calAway={calPred?.away_goals ?? null}
+          onConfirm={handlePickConfirm}
+          onCancel={() => setShowPickSheet(false)}
         />
       )}
       <div className={`border-b border-zinc-100 px-4 py-3 last:border-0 transition-colors ${isSaved ? 'bg-green-50/50' : ''}`}>
@@ -267,7 +361,12 @@ function ResultRow({
                 </>
               )}
               </div>
-              {calPred && (
+              {locked?.pick_source && locked.pick_source !== 'raw' && (
+                <div className="text-xs text-blue-500 font-medium">
+                  {locked.pick_source === 'calibrated' ? '↑ calibrated pick' : '↑ custom pick'}
+                </div>
+              )}
+              {!locked && calPred && (
                 <div className="flex items-center gap-1 text-xs text-blue-600">
                   <span className="text-zinc-400">Cal:</span>
                   <span className="font-medium">{goalsDisplay(calPred.home_goals)} – {goalsDisplay(calPred.away_goals)}</span>
@@ -332,19 +431,11 @@ function ResultRow({
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5">
-                <input type="number" min="0" max="20" value={homeActual} onChange={e => setHomeActual(e.target.value)} placeholder="0"
-                  className="w-12 rounded border border-zinc-300 px-2 py-1 text-center text-sm font-bold focus:border-blue-500 focus:outline-none" />
+              <div className="flex items-center gap-2">
+                <ScoreStepper value={homeActual} onChange={setHomeActual} />
                 <span className="text-zinc-400 text-sm">–</span>
-                <input type="number" min="0" max="20" value={awayActual} onChange={e => setAwayActual(e.target.value)} placeholder="0"
-                  className="w-12 rounded border border-zinc-300 px-2 py-1 text-center text-sm font-bold focus:border-blue-500 focus:outline-none" />
-                <Button size="sm" variant="primary" onClick={() => {
-                  const h = parseInt(homeActual, 10)
-                  const a = parseInt(awayActual, 10)
-                  if (!isNaN(h) && !isNaN(a) && h >= 0 && a >= 0) setShowConfirm(true)
-                }}>
-                  Save
-                </Button>
+                <ScoreStepper value={awayActual} onChange={setAwayActual} />
+                <Button size="sm" variant="primary" onClick={() => setShowConfirm(true)}>Save</Button>
               </div>
             )}
           </div>
