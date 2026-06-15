@@ -6,7 +6,7 @@ import {
   getHumanPrediction, saveHumanPrediction,
 } from '@/lib/store'
 import { getEffectivePrediction } from '@/lib/models'
-import { formatDate, formatTime, goals, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
+import { formatDate, formatTime, goals, goalsDisplay, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -232,7 +232,7 @@ function ResultRow({
               {isSaved && existing ? (
                 <>
                   <span className={`text-sm font-bold ${outcome(displayPred?.home_goals ?? 0, displayPred?.away_goals ?? 0) === outcome(existing.home_goals, existing.away_goals) ? 'text-zinc-700' : 'text-zinc-400 line-through'}`}>
-                    {displayPred ? `${goals(displayPred.home_goals)} – ${goals(displayPred.away_goals)}` : '—'}
+                    {displayPred ? `${goalsDisplay(displayPred.home_goals)} – ${goalsDisplay(displayPred.away_goals)}` : '—'}
                   </span>
                   {displayPred && (outcome(displayPred.home_goals, displayPred.away_goals) === outcome(existing.home_goals, existing.away_goals)
                     ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
@@ -241,7 +241,7 @@ function ResultRow({
               ) : (
                 <>
                   <span className={`text-sm font-bold ${isLocked ? 'text-zinc-900' : 'text-zinc-400'}`}>
-                    {displayPred ? `${goals(displayPred.home_goals)} – ${goals(displayPred.away_goals)}` : '—'}
+                    {displayPred ? `${goalsDisplay(displayPred.home_goals)} – ${goalsDisplay(displayPred.away_goals)}` : '—'}
                   </span>
                   {!isLocked && livePred && (
                     <button onClick={handleLock} className="flex items-center gap-1 rounded border border-zinc-200 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900">
