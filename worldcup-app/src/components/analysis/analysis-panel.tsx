@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getFixtures, getTeams, getResults, getLockedPredictions, getHumanPredictions, computeHumanBiases } from '@/lib/store'
+import { getFixtures, getTeams, getResults, getLockedPredictions, getHumanPredictions, computeHumanBiases, computeCalibration } from '@/lib/store'
 import { getOutcome } from '@/lib/models'
 import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -45,6 +45,7 @@ export function AnalysisPanel() {
   const results = getResults()
   const lockedPreds = getLockedPredictions()
   const humanPredsList = getHumanPredictions()
+  const calibration = computeCalibration()
   const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
 
   // Build per-match analysis rows (only matches with both a result AND a locked prediction)
@@ -469,6 +470,44 @@ export function AnalysisPanel() {
           </Card>
         )
       })()}
+
+      {/* Model Calibration */}
+      <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-4 w-4" /> Model Calibration</CardTitle></CardHeader>
+        <CardContent>
+          {calibration.every(c => c.matchCount < 3) ? (
+            <p className="text-sm text-zinc-400">Need at least 3 results per model to compute calibration factors.</p>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs text-zinc-500">Scale factors learned from actual vs predicted goals. ×1.00 = perfectly calibrated. &gt;1 = model was under-predicting, &lt;1 = over-predicting.</p>
+              <div className="grid grid-cols-3 gap-3">
+                {calibration.map(cal => (
+                  <div key={cal.model} className="rounded-lg border border-zinc-100 p-3 space-y-1">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Badge className={MODEL_COLORS[cal.model]}>Model {cal.model}</Badge>
+                      <span className="text-xs text-zinc-400">{cal.matchCount} matches</span>
+                    </div>
+                    {cal.matchCount < 3 ? (
+                      <p className="text-xs text-zinc-400">Not enough data</p>
+                    ) : (
+                      <>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-zinc-500">Home ×</span>
+                          <span className={`font-semibold tabular-nums ${cal.homeScale > 1.05 ? 'text-blue-600' : cal.homeScale < 0.95 ? 'text-red-500' : 'text-green-600'}`}>{cal.homeScale.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-zinc-500">Away ×</span>
+                          <span className={`font-semibold tabular-nums ${cal.awayScale > 1.05 ? 'text-blue-600' : cal.awayScale < 0.95 ? 'text-red-500' : 'text-green-600'}`}>{cal.awayScale.toFixed(2)}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

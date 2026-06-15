@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   getFixtures, getTeams, getResult, saveResult, deleteResult,
   getPredictions, getConfig, getLockedPrediction, saveLockPrediction, deleteLockedPrediction,
-  getHumanPrediction, saveHumanPrediction,
+  getHumanPrediction, saveHumanPrediction, computeCalibration,
 } from '@/lib/store'
 import { getEffectivePrediction } from '@/lib/models'
 import { formatDate, formatTime, goals, goalsDisplay, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
@@ -93,6 +93,13 @@ function ResultRow({
     a: config.weight_a, b: config.weight_b, c: config.weight_c,
   })
   const displayPred = locked ?? livePred
+
+  const calibration = computeCalibration()
+  const modelCal = calibration.find(c => c.model === (locked?.model ?? selectedModel))
+  const calPred = modelCal && modelCal.matchCount >= 3 && displayPred ? {
+    home_goals: Math.round(displayPred.home_goals * modelCal.homeScale * 10) / 10,
+    away_goals: Math.round(displayPred.away_goals * modelCal.awayScale * 10) / 10,
+  } : null
 
   const handleLock = useCallback(() => {
     if (!livePred) return
@@ -228,7 +235,8 @@ function ResultRow({
           {/* Model predicted score */}
           <div className="shrink-0">
             <div className="text-xs text-zinc-400 mb-1">Model predicted</div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-1.5">
               {isSaved && existing ? (
                 <>
                   <span className={`text-sm font-bold ${outcome(displayPred?.home_goals ?? 0, displayPred?.away_goals ?? 0) === outcome(existing.home_goals, existing.away_goals) ? 'text-zinc-700' : 'text-zinc-400 line-through'}`}>
@@ -257,6 +265,13 @@ function ResultRow({
                     </button>
                   )}
                 </>
+              )}
+              </div>
+              {calPred && (
+                <div className="flex items-center gap-1 text-xs text-blue-600">
+                  <span className="text-zinc-400">Cal:</span>
+                  <span className="font-medium">{goalsDisplay(calPred.home_goals)} – {goalsDisplay(calPred.away_goals)}</span>
+                </div>
               )}
             </div>
           </div>
