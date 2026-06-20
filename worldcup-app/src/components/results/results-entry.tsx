@@ -70,17 +70,18 @@ function PickSheet({ homeTeam, awayTeam, rawHome, rawAway, calHome, calAway, onC
   homeTeam: string; awayTeam: string
   rawHome: number; rawAway: number
   calHome: number | null; calAway: number | null
-  onConfirm: (homeGoals: number, awayGoals: number, source: PickSource) => void
+  onConfirm: (homeGoals: number, awayGoals: number, source: PickSource, comment: string) => void
   onCancel: () => void
 }) {
   const [pick, setPick] = useState<PickSource>(calHome !== null ? 'calibrated' : 'raw')
   const [customHome, setCustomHome] = useState(Math.round(rawHome))
   const [customAway, setCustomAway] = useState(Math.round(rawAway))
+  const [comment, setComment] = useState('')
 
-  const options: { value: PickSource; label: string; home: number; away: number; available: boolean }[] = [
-    { value: 'raw', label: 'Raw prediction', home: rawHome, away: rawAway, available: true },
-    { value: 'calibrated', label: 'Calibrated', home: calHome ?? 0, away: calAway ?? 0, available: calHome !== null },
-    { value: 'custom', label: 'Custom', home: customHome, away: customAway, available: true },
+  const options: { value: PickSource; label: string; sub: string; home: number; away: number; available: boolean }[] = [
+    { value: 'raw', label: 'Raw prediction', sub: 'Direct model output', home: rawHome, away: rawAway, available: true },
+    { value: 'calibrated', label: 'Calibrated', sub: 'Adjusted from past results', home: calHome ?? 0, away: calAway ?? 0, available: calHome !== null },
+    { value: 'custom', label: 'Custom', sub: 'Your own scoreline', home: customHome, away: customAway, available: true },
   ]
 
   const selected = options.find(o => o.value === pick)!
@@ -88,7 +89,7 @@ function PickSheet({ homeTeam, awayTeam, rawHome, rawAway, calHome, calAway, onC
   function handleConfirm() {
     const h = pick === 'custom' ? customHome : Math.round(selected.home)
     const a = pick === 'custom' ? customAway : Math.round(selected.away)
-    onConfirm(h, a, pick)
+    onConfirm(h, a, pick, comment)
   }
 
   return (
@@ -96,15 +97,14 @@ function PickSheet({ homeTeam, awayTeam, rawHome, rawAway, calHome, calAway, onC
       <div className="w-full max-w-sm rounded-t-2xl sm:rounded-xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
         <p className="text-sm font-semibold text-zinc-900 mb-1">Choose your scoreline</p>
         <p className="text-xs text-zinc-500 mb-4">{homeTeam} vs {awayTeam}</p>
-        <div className="space-y-2 mb-4">
+        <div className="space-y-2 mb-3">
           {options.filter(o => o.available).map(opt => (
             <label key={opt.value} className={`flex items-center justify-between rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${pick === opt.value ? 'border-blue-400 bg-blue-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
               <div className="flex items-center gap-2.5">
                 <input type="radio" name="pick" value={opt.value} checked={pick === opt.value} onChange={() => setPick(opt.value)} className="accent-blue-500" />
                 <div>
                   <div className="text-xs font-medium text-zinc-700">{opt.label}</div>
-                  {opt.value === 'calibrated' && <div className="text-xs text-zinc-400">Adjusted from past results</div>}
-                  {opt.value === 'raw' && <div className="text-xs text-zinc-400">Direct model output</div>}
+                  <div className="text-xs text-zinc-400">{opt.sub}</div>
                 </div>
               </div>
               {opt.value === 'custom' && pick === 'custom' ? (
@@ -122,6 +122,15 @@ function PickSheet({ homeTeam, awayTeam, rawHome, rawAway, calHome, calAway, onC
             </label>
           ))}
         </div>
+        {pick === 'custom' && (
+          <textarea
+            value={comment}
+            onChange={e => setComment(e.target.value)}
+            placeholder="Why are you going with a different score?"
+            rows={2}
+            className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-700 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none resize-none mb-3"
+          />
+        )}
         <div className="flex gap-2 justify-end">
           <button onClick={onCancel} className="rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50">Cancel</button>
           <button onClick={handleConfirm} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Lock this pick</button>
@@ -164,10 +173,6 @@ function ResultRow({
   const [awayActual, setAwayActual] = useState(existing?.away_goals ?? 0)
   const [showConfirm, setShowConfirm] = useState(false)
   const [showPickSheet, setShowPickSheet] = useState(false)
-  const [showOverride, setShowOverride] = useState(false)
-  const [humanHome, setHumanHome] = useState(String(humanExist?.home_goals ?? ''))
-  const [humanAway, setHumanAway] = useState(String(humanExist?.away_goals ?? ''))
-  const [humanComment, setHumanComment] = useState(humanExist?.comment ?? '')
 
   const livePred = getEffectivePrediction(predictions as any, fixture.id, selectedModel, {
     a: config.weight_a, b: config.weight_b, c: config.weight_c,
@@ -186,7 +191,7 @@ function ResultRow({
     setShowPickSheet(true)
   }, [livePred])
 
-  const handlePickConfirm = useCallback((homeGoals: number, awayGoals: number, source: PickSource) => {
+  const handlePickConfirm = useCallback((homeGoals: number, awayGoals: number, source: PickSource, comment: string) => {
     if (!livePred) return
     saveLockPrediction({
       fixture_id: fixture.id,
@@ -198,6 +203,9 @@ function ResultRow({
       away_win_prob: livePred.away_win_prob,
       pick_source: source,
     })
+    if (source === 'custom') {
+      saveHumanPrediction({ fixture_id: fixture.id, home_goals: homeGoals, away_goals: awayGoals, comment })
+    }
     setShowPickSheet(false)
     onResultChange()
   }, [fixture.id, selectedModel, livePred, onResultChange])
@@ -223,19 +231,9 @@ function ResultRow({
     }
 
     saveResult({ fixture_id: fixture.id, home_goals: homeActual, away_goals: awayActual })
-
-    const finalLocked = getLockedPrediction(fixture.id) ?? livePred
-    if (finalLocked) {
-      const hh = parseInt(humanHome, 10)
-      const ha = parseInt(humanAway, 10)
-      if (!isNaN(hh) && !isNaN(ha) && (hh !== Math.round(finalLocked.home_goals) || ha !== Math.round(finalLocked.away_goals))) {
-        saveHumanPrediction({ fixture_id: fixture.id, home_goals: hh, away_goals: ha, comment: humanComment })
-      }
-    }
-
     setShowConfirm(false)
     onResultChange()
-  }, [homeActual, awayActual, humanHome, humanAway, humanComment, locked, livePred, selectedModel, fixture.id, onResultChange])
+  }, [homeActual, awayActual, locked, livePred, selectedModel, fixture.id, onResultChange])
 
   const handleDeleteResult = () => {
     if (!window.confirm('Delete this result? The prediction lock will also be removed.')) return
@@ -350,14 +348,6 @@ function ResultRow({
                       <Lock className="h-3 w-3" /> Lock
                     </button>
                   )}
-                  {isLocked && !isSaved && (
-                    <button
-                      onClick={() => setShowOverride(v => !v)}
-                      className="flex items-center gap-1 rounded border border-blue-200 px-2 py-0.5 text-xs text-blue-500 hover:bg-blue-50"
-                    >
-                      Override ✏️
-                    </button>
-                  )}
                 </>
               )}
               </div>
@@ -396,21 +386,8 @@ function ResultRow({
                 ) : (
                   <span className="text-xs text-zinc-400 italic">Accepted model</span>
                 )
-              ) : showOverride ? (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <input type="number" min="0" max="20" value={humanHome} onChange={e => setHumanHome(e.target.value)} placeholder="0"
-                      className="w-12 rounded border border-blue-300 px-2 py-1 text-center text-sm font-bold focus:border-blue-500 focus:outline-none" />
-                    <span className="text-zinc-400 text-sm">–</span>
-                    <input type="number" min="0" max="20" value={humanAway} onChange={e => setHumanAway(e.target.value)} placeholder="0"
-                      className="w-12 rounded border border-blue-300 px-2 py-1 text-center text-sm font-bold focus:border-blue-500 focus:outline-none" />
-                  </div>
-                  <input type="text" value={humanComment} onChange={e => setHumanComment(e.target.value)}
-                    placeholder="Why are you overriding?"
-                    className="rounded border border-zinc-200 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none w-48" />
-                </div>
               ) : (
-                <span className="text-xs text-zinc-400 italic">No override</span>
+                <span className="text-xs text-zinc-400 italic">—</span>
               )}
             </div>
           )}
