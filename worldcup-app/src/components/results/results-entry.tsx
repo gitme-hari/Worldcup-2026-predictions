@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Lock, Unlock, Trash2, CheckCircle2, AlertTriangle, XCircle, Zap } from 'lucide-react'
 import type { SeedFixture } from '@/lib/seed-data'
 import type { ModelKey } from '@/lib/types'
+import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
 
 const MODEL_OPTIONS: { value: ModelKey; label: string }[] = [
   { value: 'A', label: 'Model A (Poisson)' },
@@ -374,6 +375,7 @@ export function ResultsEntry() {
 
   return (
     <div className="space-y-4">
+      <SyncErrorBanner />
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5 rounded border border-zinc-200 p-0.5">
           {(['all', 'pending', 'entered'] as const).map(f => (
