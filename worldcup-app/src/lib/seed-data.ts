@@ -206,15 +206,42 @@ function venueEloAdjust(teamId: string, venue: string): number {
   return adj
 }
 
-// ─── Model B: historical tournament over/under-performance vs raw Elo ────────
-const MODEL_B_BIAS: Record<string, number> = {
-  // Over-performers
-  mar: 0.22, cro: 0.18, jpn: 0.14, sui: 0.12, arg: 0.12, sen: 0.10,
-  uru: 0.10, fra: 0.08, aus: 0.08, kor: 0.06, ecu: 0.06,
-  sco: 0.04, nor: 0.04, col: 0.06,
-  // Under-performers
-  eng: -0.14, bel: -0.16, ned: -0.10, mex: -0.10, ger: -0.06,
-  usa: -0.06, tur: -0.04, can: -0.06,
+// ─── Model B v2: separate attack / defense multipliers per team ──────────────
+// Attack  > 1.0 = scores more than Elo predicts at tournaments
+// Attack  < 1.0 = scores less
+// Defense > 1.0 = concedes less than Elo predicts (harder to score against)
+// Defense < 1.0 = concedes more
+// Derived from WC 1998-2022 goals-scored/conceded per game relative to Elo tier.
+// Default (unlisted teams): 1.0 / 1.0 — neutral, falls back to pure Elo.
+// Groups: elite (Elo ≥1900), strong (1750-1899), mid (1600-1749), lower (<1600)
+const MODEL_B2_ATTACK: Record<string, number> = {
+  // Elite attackers
+  fra: 1.14, arg: 1.13, bra: 1.10, esp: 1.09, por: 1.08, ger: 1.07,
+  ned: 1.06, nor: 1.06, eng: 1.05, bel: 1.05,
+  // Strong attackers
+  col: 1.08, jpn: 1.06, ecu: 1.05, sen: 1.04, aus: 1.04, kor: 1.04,
+  cro: 1.03, sco: 1.03, uru: 1.02, sui: 1.00,
+  // Defensive-style or historically low-scoring at WC
+  mar: 0.90, irn: 0.88,
+  // Host nations — crowd lift boosts goals scored (applied on top of venue adj)
+  usa: 0.97, mex: 1.02, can: 0.96,
+  // Mid-tier with clear attacking identity
+  alg: 1.02, egy: 0.98, tun: 0.94, gha: 0.98, ksa: 0.94,
+  // Lower-tier defaults handled by 1.0 fallback
+}
+const MODEL_B2_DEFENSE: Record<string, number> = {
+  // Elite defenders
+  mar: 1.18, fra: 1.10, arg: 1.08, sui: 1.09, uru: 1.07, cro: 1.08,
+  esp: 1.07, ger: 1.06, por: 1.04, jpn: 1.07, irn: 1.06,
+  // Good defenders
+  sen: 1.04, nor: 1.03, col: 1.02, bra: 1.02,
+  // Historically leaky at WC despite Elo
+  eng: 0.93, bel: 0.90, ned: 0.93, mex: 0.95, aus: 0.96,
+  // Host nations — known defensive frailty under pressure
+  usa: 0.96, can: 0.95,
+  // Lower-tier porous defenses
+  hai: 0.82, cpv: 0.84, cur: 0.83, uzb: 0.85, jor: 0.84, nzl: 0.88,
+  qat: 0.87, irq: 0.88,
 }
 
 // ─── Model C: style-of-play attack/defense multipliers ───────────────────────
@@ -230,6 +257,7 @@ const MODEL_C_DEFENSE_BIAS: Record<string, number> = {
 }
 
 function poissonGoals(eloHome: number, eloAway: number, homeAdv = 0.15) {
+  // Exponential-linear model: realistic WC scores, no blow-outs from Elo gaps
   const K = 0.0020
   const BASE = 1.12
   const diff = eloHome - eloAway
@@ -288,40 +316,40 @@ export function generatePredictions(): SeedPrediction[] {
 
     // ── Model A: pure Elo + Poisson + venue ───────────────────────────────
     const { homeLambda: hlA, awayLambda: alA } = poissonGoals(hEloV, aEloV)
-    const pAraw = calcOutcomeProbs(hlA, alA)
-    const pAhw = shrink(pAraw.homeWin, 0.10)
-    const pAdw = shrink(pAraw.draw, 0.10)
-    const pAaw = shrink(pAraw.awayWin, 0.10)
-    const pAtot = pAhw + pAdw + pAaw
+    const pA = calcOutcomeProbs(hlA, alA)
+    const hwA = shrink(pA.homeWin, 0.10)
+    const dwA = shrink(pA.draw, 0.10)
+    const awA = shrink(pA.awayWin, 0.10)
+    const totA = hwA + dwA + awA
     predictions.push({
       id: `pred-A-${fixture.id}`, fixture_id: fixture.id, model: 'A',
       home_goals: Math.round(hlA * 10) / 10,
       away_goals: Math.round(alA * 10) / 10,
-      home_win_prob: Math.round((pAhw / pAtot) * 100) / 100,
-      draw_prob: Math.round((pAdw / pAtot) * 100) / 100,
-      away_win_prob: Math.round((pAaw / pAtot) * 100) / 100,
+      home_win_prob: Math.round((hwA / totA) * 100) / 100,
+      draw_prob: Math.round((dwA / totA) * 100) / 100,
+      away_win_prob: Math.round((awA / totA) * 100) / 100,
     })
 
-    // ── Model B: ML — Elo adjusted by tournament performance history + venue ─
-    const hBias = MODEL_B_BIAS[home.id] ?? 0
-    const aBias = MODEL_B_BIAS[away.id] ?? 0
-    const { homeLambda: hlB, awayLambda: alB } = poissonGoals(
-      hEloV * (1 + hBias),
-      aEloV * (1 + aBias),
-      0.12
-    )
-    const pBraw = calcOutcomeProbs(hlB, alB)
-    const pBhw = shrink(pBraw.homeWin, 0.12)
-    const pBdw = shrink(pBraw.draw, 0.12)
-    const pBaw = shrink(pBraw.awayWin, 0.12)
-    const pBtot = pBhw + pBdw + pBaw
+    // ── Model B v2: attack/defense multipliers × Poisson base + venue ────────
+    const hB2Atk = MODEL_B2_ATTACK[home.id] ?? 1.0
+    const aB2Def = MODEL_B2_DEFENSE[away.id] ?? 1.0
+    const aB2Atk = MODEL_B2_ATTACK[away.id] ?? 1.0
+    const hB2Def = MODEL_B2_DEFENSE[home.id] ?? 1.0
+    const { homeLambda: hlBraw, awayLambda: alBraw } = poissonGoals(hEloV, aEloV, 0.12)
+    const hlB = Math.max(0.3, Math.min(3.0, hlBraw * hB2Atk * (2 - aB2Def)))
+    const alB = Math.max(0.3, Math.min(3.0, alBraw * aB2Atk * (2 - hB2Def)))
+    const pB = calcOutcomeProbs(hlB, alB)
+    const hwB = shrink(pB.homeWin, 0.18)
+    const dwB = shrink(pB.draw, 0.18)
+    const awB = shrink(pB.awayWin, 0.18)
+    const totB = hwB + dwB + awB
     predictions.push({
       id: `pred-B-${fixture.id}`, fixture_id: fixture.id, model: 'B',
       home_goals: Math.round(hlB * 10) / 10,
       away_goals: Math.round(alB * 10) / 10,
-      home_win_prob: Math.round((pBhw / pBtot) * 100) / 100,
-      draw_prob: Math.round((pBdw / pBtot) * 100) / 100,
-      away_win_prob: Math.round((pBaw / pBtot) * 100) / 100,
+      home_win_prob: Math.round((hwB / totB) * 100) / 100,
+      draw_prob: Math.round((dwB / totB) * 100) / 100,
+      away_win_prob: Math.round((awB / totB) * 100) / 100,
     })
 
     // ── Model C: market-calibrated base + venue ───────────────────────────
@@ -335,9 +363,9 @@ export function generatePredictions(): SeedPrediction[] {
     const hlC = Math.max(0.3, hlCraw * hAtk * (2 - aDef))
     const alC = Math.max(0.3, alCraw * aAtk * (2 - hDef))
     const pCraw = calcOutcomeProbs(hlC, alC)
-    const hw = shrink(pCraw.homeWin)
-    const dw = shrink(pCraw.draw)
-    const aw = shrink(pCraw.awayWin)
+    const hw = shrink(pCraw.homeWin, 0.18)
+    const dw = shrink(pCraw.draw, 0.18)
+    const aw = shrink(pCraw.awayWin, 0.18)
     const tot = hw + dw + aw
     predictions.push({
       id: `pred-C-${fixture.id}`, fixture_id: fixture.id, model: 'C',
