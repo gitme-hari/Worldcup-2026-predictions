@@ -1,41 +1,17 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getFixtures, getTeams, getResults, getLockedPredictions, getHumanPredictions, computeHumanBiases, computeCalibration } from '@/lib/store'
+import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiases, computeCalibration } from '@/lib/store'
 import { getOutcome } from '@/lib/models'
 import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { TrendingUp, Target, CheckCircle, XCircle, Minus, Brain, Zap } from 'lucide-react'
+import { TrendingUp, Target, CheckCircle, XCircle, Brain, Zap } from 'lucide-react'
 import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
 
-interface MatchAnalysis {
-  fixtureId: string
-  date: string
-  homeTeam: { name: string; code: string; flag_url: string }
-  awayTeam: { name: string; code: string; flag_url: string }
-  group: string
-  model: string
-  predHome: number
-  predAway: number
-  actualHome: number
-  actualAway: number
-  outcomeCorrect: boolean
-  homeGoalErr: number
-  awayGoalErr: number
-  totalGoalErr: number
-}
-
-interface ModelSummary {
-  model: string
-  matches: number
-  correct: number
-  accuracy: number
-  avgGoalErr: number
-}
+const MODELS = ['A', 'B', 'C'] as const
 
 export function AnalysisPanel() {
   const [mounted, setMounted] = useState(false)
-  const [modelFilter, setModelFilter] = useState('all')
   useEffect(() => setMounted(true), [])
 
   if (!mounted) return <div className="h-64 animate-pulse rounded-lg bg-zinc-100" />
@@ -44,70 +20,67 @@ export function AnalysisPanel() {
   const teams = getTeams()
   const results = getResults()
   const lockedPreds = getLockedPredictions()
+  const allPreds = getPredictions()
   const humanPredsList = getHumanPredictions()
   const calibration = computeCalibration()
   const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
 
-  // Build per-match analysis rows (only matches with both a result AND a locked prediction)
-  const rows: MatchAnalysis[] = []
-  for (const result of results) {
+  // ── Per-match comparison: all 3 models vs actual ────────────────────────────
+  const comparisons = results.flatMap(result => {
     const fixture = fixtures.find(f => f.id === result.fixture_id)
-    if (!fixture) continue
-    const locked = lockedPreds.find(p => p.fixture_id === result.fixture_id)
-    if (!locked) continue
-
+    if (!fixture) return []
     const home = teamMap[fixture.home_team_id]
     const away = teamMap[fixture.away_team_id]
-    if (!home || !away) continue
-
-    const predOutcome = getOutcome(locked.home_goals, locked.away_goals)
+    if (!home || !away) return []
+    const locked = lockedPreds.find(p => p.fixture_id === result.fixture_id)
     const actualOutcome = getOutcome(result.home_goals, result.away_goals)
 
-    rows.push({
+    const modelData = Object.fromEntries(MODELS.map(m => {
+      const pred = allPreds.find(p => p.fixture_id === result.fixture_id && p.model === m)
+      if (!pred) return [m, null]
+      return [m, {
+        predHome: pred.home_goals,
+        predAway: pred.away_goals,
+        outcomeCorrect: getOutcome(pred.home_goals, pred.away_goals) === actualOutcome,
+        goalErr: Math.abs(pred.home_goals - result.home_goals) + Math.abs(pred.away_goals - result.away_goals),
+      }]
+    }))
+
+    return [{
       fixtureId: fixture.id,
       date: fixture.kickoff_utc,
       homeTeam: home,
       awayTeam: away,
       group: fixture.group ?? '',
-      model: locked.model,
-      predHome: locked.home_goals,
-      predAway: locked.away_goals,
-      actualHome: result.home_goals,
-      actualAway: result.away_goals,
-      outcomeCorrect: predOutcome === actualOutcome,
-      homeGoalErr: Math.abs(locked.home_goals - result.home_goals),
-      awayGoalErr: Math.abs(locked.away_goals - result.away_goals),
-      totalGoalErr: Math.abs(locked.home_goals - result.home_goals) + Math.abs(locked.away_goals - result.away_goals),
-    })
-  }
+      lockedModel: locked?.model ?? null,
+      actual: { home: result.home_goals, away: result.away_goals },
+      models: modelData,
+    }]
+  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
-  rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-
-  // Model summaries
-  const modelKeys = [...new Set(rows.map(r => r.model))]
-  const summaries: ModelSummary[] = modelKeys.map(model => {
-    const mRows = rows.filter(r => r.model === model)
-    const correct = mRows.filter(r => r.outcomeCorrect).length
+  // ── Model leaderboard across ALL played matches ──────────────────────────────
+  const leaderboard = MODELS.map(m => {
+    const entries = comparisons.map(c => c.models[m]).filter(Boolean)
+    const correct = entries.filter(e => e!.outcomeCorrect).length
     return {
-      model,
-      matches: mRows.length,
+      model: m,
+      matches: entries.length,
       correct,
-      accuracy: mRows.length > 0 ? correct / mRows.length : 0,
-      avgGoalErr: mRows.length > 0 ? mRows.reduce((s, r) => s + r.totalGoalErr, 0) / mRows.length : 0,
+      accuracy: entries.length > 0 ? correct / entries.length : 0,
+      avgGoalErr: entries.length > 0 ? entries.reduce((s, e) => s + e!.goalErr, 0) / entries.length : 0,
     }
-  }).sort((a, b) => b.accuracy - a.accuracy)
+  }).sort((a, b) => b.accuracy - a.accuracy || a.avgGoalErr - b.avgGoalErr)
 
-  const filtered = modelFilter === 'all' ? rows : rows.filter(r => r.model === modelFilter)
-  const overallCorrect = rows.filter(r => r.outcomeCorrect).length
+  const bestModel = leaderboard[0]?.accuracy > 0 ? leaderboard[0].model : null
 
-  if (rows.length === 0) {
+  if (comparisons.length === 0) {
     return (
       <Card>
         <CardContent className="py-10 text-center">
           <Target className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
           <p className="text-sm font-medium text-zinc-500">No analysable data yet</p>
           <p className="mt-1 text-xs text-zinc-400">
-            Go to Results → lock a prediction for a match → enter the actual score. Analysis will appear here.
+            Go to Results → lock a prediction → enter the actual score. Analysis will appear here.
           </p>
         </CardContent>
       </Card>
@@ -117,144 +90,127 @@ export function AnalysisPanel() {
   return (
     <div className="space-y-4">
       <SyncErrorBanner />
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Card>
-          <CardContent className="py-3">
-            <div className="text-xs text-zinc-400">Matches analysed</div>
-            <div className="text-2xl font-bold text-zinc-900 mt-0.5">{rows.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3">
-            <div className="text-xs text-zinc-400">Outcome accuracy</div>
-            <div className="text-2xl font-bold text-zinc-900 mt-0.5">
-              {rows.length > 0 ? `${Math.round((overallCorrect / rows.length) * 100)}%` : '—'}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3">
-            <div className="text-xs text-zinc-400">Avg goal error</div>
-            <div className="text-2xl font-bold text-zinc-900 mt-0.5">
-              {rows.length > 0
-                ? (rows.reduce((s, r) => s + r.totalGoalErr, 0) / rows.length).toFixed(2)
-                : '—'}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="py-3">
-            <div className="text-xs text-zinc-400">Best model</div>
-            <div className="text-sm font-bold text-zinc-900 mt-0.5">
-              {summaries[0] ? (
-                <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-white text-xs ${MODEL_COLORS[summaries[0].model]}`}>
-                  {MODEL_LABELS[summaries[0].model]}
-                </span>
-              ) : '—'}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
 
-      {/* Per-model breakdown */}
-      {summaries.length > 1 && (
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-1.5"><TrendingUp className="h-3.5 w-3.5" />Model Breakdown</CardTitle></CardHeader>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-zinc-100 bg-zinc-50">
-                  <th className="px-4 py-2 text-left font-medium text-zinc-500">Model</th>
-                  <th className="px-4 py-2 text-center font-medium text-zinc-500">Matches</th>
-                  <th className="px-4 py-2 text-center font-medium text-zinc-500">Correct</th>
-                  <th className="px-4 py-2 text-center font-medium text-zinc-500">Accuracy</th>
-                  <th className="px-4 py-2 text-center font-medium text-zinc-500">Avg Goal Err</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summaries.map((s, i) => (
-                  <tr key={s.model} className={`border-b border-zinc-50 ${i === 0 ? 'bg-green-50' : ''}`}>
-                    <td className="px-4 py-2">
-                      <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-white text-xs ${MODEL_COLORS[s.model]}`}>
-                        {MODEL_LABELS[s.model]}
-                      </span>
-                      {i === 0 && <span className="ml-1.5 text-xs text-green-600 font-medium">Best</span>}
-                    </td>
-                    <td className="px-4 py-2 text-center text-zinc-700">{s.matches}</td>
-                    <td className="px-4 py-2 text-center text-zinc-700">{s.correct}</td>
-                    <td className="px-4 py-2 text-center font-semibold text-zinc-900">{Math.round(s.accuracy * 100)}%</td>
-                    <td className="px-4 py-2 text-center text-zinc-700">{s.avgGoalErr.toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-
-      {/* Per-match table */}
+      {/* Model Leaderboard */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Match-by-Match</CardTitle>
-          <select
-            value={modelFilter}
-            onChange={e => setModelFilter(e.target.value)}
-            className="rounded border border-zinc-300 bg-white px-2 py-1 text-xs focus:outline-none"
-          >
-            <option value="all">All models</option>
-            {modelKeys.map(m => (
-              <option key={m} value={m}>{MODEL_LABELS[m] ?? m}</option>
-            ))}
-          </select>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-1.5">
+            <TrendingUp className="h-3.5 w-3.5" /> Model Leaderboard
+          </CardTitle>
+          <p className="text-xs text-zinc-400 mt-0.5">All 3 models scored against every played match — pick the best one for knockouts.</p>
         </CardHeader>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-zinc-100 bg-zinc-50">
-                <th className="px-4 py-2 text-left font-medium text-zinc-500">Date</th>
-                <th className="px-4 py-2 text-left font-medium text-zinc-500">Match</th>
-                <th className="px-4 py-2 text-center font-medium text-zinc-500">Model</th>
-                <th className="px-4 py-2 text-center font-medium text-zinc-500">Predicted</th>
-                <th className="px-4 py-2 text-center font-medium text-zinc-500">Actual</th>
-                <th className="px-4 py-2 text-center font-medium text-zinc-500">Outcome</th>
-                <th className="px-4 py-2 text-center font-medium text-zinc-500">Goal Err</th>
+                <th className="px-4 py-2 text-left font-medium text-zinc-500">Rank</th>
+                <th className="px-4 py-2 text-left font-medium text-zinc-500">Model</th>
+                <th className="px-4 py-2 text-center font-medium text-zinc-500">Matches</th>
+                <th className="px-4 py-2 text-center font-medium text-zinc-500">Correct</th>
+                <th className="px-4 py-2 text-center font-medium text-zinc-500">Accuracy</th>
+                <th className="px-4 py-2 text-center font-medium text-zinc-500">Avg Goal Err</th>
+                <th className="px-4 py-2 text-center font-medium text-zinc-500">Calibration</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map(row => (
-                <tr key={row.fixtureId} className={`border-b border-zinc-50 ${row.outcomeCorrect ? 'bg-green-50/40' : ''}`}>
-                  <td className="px-4 py-2.5 text-zinc-400 whitespace-nowrap">{formatDate(row.date)}</td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-1.5">
+              {leaderboard.map((s, i) => {
+                const cal = calibration.find(c => c.model === s.model)
+                const isLocked = comparisons.some(c => c.lockedModel === s.model)
+                return (
+                  <tr key={s.model} className={`border-b border-zinc-50 ${i === 0 && s.accuracy > 0 ? 'bg-green-50' : ''}`}>
+                    <td className="px-4 py-2.5 font-bold text-zinc-400">#{i + 1}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-white text-xs ${MODEL_COLORS[s.model]}`}>
+                          {MODEL_LABELS[s.model]}
+                        </span>
+                        {i === 0 && s.accuracy > 0 && <span className="text-xs text-green-600 font-medium">Best</span>}
+                        {isLocked && <span className="text-xs text-zinc-400">← your choice</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-center text-zinc-700">{s.matches}</td>
+                    <td className="px-4 py-2.5 text-center text-zinc-700">{s.correct}</td>
+                    <td className="px-4 py-2.5 text-center font-semibold text-zinc-900">{Math.round(s.accuracy * 100)}%</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={s.avgGoalErr <= 1.5 ? 'text-green-600 font-medium' : s.avgGoalErr <= 2.5 ? 'text-yellow-600' : 'text-red-500'}>
+                        {s.avgGoalErr.toFixed(2)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-center text-zinc-500">
+                      {cal && cal.matchCount >= 3
+                        ? `H×${cal.homeScale.toFixed(2)} A×${cal.awayScale.toFixed(2)}`
+                        : <span className="text-zinc-300">need 3+</span>}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {bestModel && (
+          <div className="px-4 py-3 border-t border-zinc-100 bg-zinc-50 text-xs text-zinc-600">
+            💡 <strong>Recommendation for knockouts:</strong> Use{' '}
+            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-white text-xs ${MODEL_COLORS[bestModel]}`}>
+              {MODEL_LABELS[bestModel]}
+            </span>
+            {' '}— leading on accuracy across {comparisons.length} played matches.
+          </div>
+        )}
+      </Card>
+
+      {/* Match-by-match: all models side by side */}
+      <Card>
+        <CardHeader>
+          <CardTitle>All Models vs Actual</CardTitle>
+          <p className="text-xs text-zinc-400 mt-0.5">Your locked model is highlighted. ✓/✗ = outcome correct.</p>
+        </CardHeader>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-zinc-100 bg-zinc-50">
+                <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+                {MODELS.map(m => (
+                  <th key={m} className="px-3 py-2 text-center font-medium text-zinc-500">{MODEL_LABELS[m]}</th>
+                ))}
+                <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparisons.map(row => (
+                <tr key={row.fixtureId} className="border-b border-zinc-50 hover:bg-zinc-50/50">
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center gap-1">
                       <span>{row.homeTeam.flag_url}</span>
                       <span className="font-medium text-zinc-900">{row.homeTeam.code}</span>
-                      <span className="text-zinc-300">vs</span>
+                      <span className="text-zinc-300">v</span>
                       <span className="font-medium text-zinc-900">{row.awayTeam.code}</span>
                       <span>{row.awayTeam.flag_url}</span>
-                      {row.group && <span className="text-zinc-400">Grp {row.group}</span>}
                     </div>
+                    <div className="text-zinc-400 mt-0.5">{formatDate(row.date)} · Grp {row.group}</div>
                   </td>
-                  <td className="px-4 py-2.5 text-center">
-                    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-white text-xs ${MODEL_COLORS[row.model]}`}>
-                      {MODEL_LABELS[row.model] ?? row.model}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-center font-mono font-semibold text-zinc-500">
-                    {row.predHome.toFixed(1)}–{row.predAway.toFixed(1)}
-                  </td>
-                  <td className="px-4 py-2.5 text-center font-mono font-bold text-zinc-900">
-                    {row.actualHome}–{row.actualAway}
-                  </td>
-                  <td className="px-4 py-2.5 text-center">
-                    {row.outcomeCorrect
-                      ? <CheckCircle className="h-4 w-4 text-green-500 mx-auto" />
-                      : <XCircle className="h-4 w-4 text-red-400 mx-auto" />}
-                  </td>
-                  <td className="px-4 py-2.5 text-center">
-                    <span className={`font-medium ${row.totalGoalErr <= 1 ? 'text-green-600' : row.totalGoalErr <= 2 ? 'text-yellow-600' : 'text-red-500'}`}>
-                      {row.totalGoalErr.toFixed(1)}
-                    </span>
+                  {MODELS.map(m => {
+                    const d = row.models[m]
+                    const isLocked = row.lockedModel === m
+                    return (
+                      <td key={m} className={`px-3 py-2.5 text-center ${isLocked ? 'bg-blue-50' : ''}`}>
+                        {d ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className={`font-mono font-semibold ${isLocked ? 'text-blue-700' : 'text-zinc-500'}`}>
+                              {d.predHome.toFixed(1)}–{d.predAway.toFixed(1)}
+                            </span>
+                            <span>
+                              {d.outcomeCorrect
+                                ? <CheckCircle className="h-3 w-3 text-green-500 inline" />
+                                : <XCircle className="h-3 w-3 text-red-400 inline" />}
+                              {isLocked && <span className="ml-0.5 text-blue-400 text-xs">●</span>}
+                            </span>
+                          </div>
+                        ) : <span className="text-zinc-300">—</span>}
+                      </td>
+                    )
+                  })}
+                  <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">
+                    {row.actual.home}–{row.actual.away}
                   </td>
                 </tr>
               ))}
@@ -263,146 +219,79 @@ export function AnalysisPanel() {
         </div>
       </Card>
 
-      {/* Section A: You vs The Model */}
+      {/* You vs The Model */}
       {(() => {
-        // Build per-fixture human comparison rows (only where there's a human pred + result)
-        const humanRows = humanPredsList
-          .map(hp => {
-            const result = results.find(r => r.fixture_id === hp.fixture_id)
-            if (!result) return null
-            const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
-            if (!locked) return null
-            const fixture = fixtures.find(f => f.id === hp.fixture_id)
-            if (!fixture) return null
-            const home = teamMap[fixture.home_team_id]
-            const away = teamMap[fixture.away_team_id]
-            if (!home || !away) return null
-
-            const humanOutcome = getOutcome(hp.home_goals, hp.away_goals)
-            const modelOutcome = getOutcome(locked.home_goals, locked.away_goals)
-            const actualOutcome = getOutcome(result.home_goals, result.away_goals)
-
-            return {
-              fixtureId: fixture.id,
-              date: fixture.kickoff_utc,
-              homeTeam: home,
-              awayTeam: away,
-              modelHome: locked.home_goals,
-              modelAway: locked.away_goals,
-              humanHome: hp.home_goals,
-              humanAway: hp.away_goals,
-              comment: hp.comment,
-              actualHome: result.home_goals,
-              actualAway: result.away_goals,
-              humanCorrect: humanOutcome === actualOutcome,
-              modelCorrect: modelOutcome === actualOutcome,
-              createdAt: hp.created_at,
-            }
-          })
-          .filter((r): r is NonNullable<typeof r> => r !== null)
-
+        const humanRows = humanPredsList.flatMap(hp => {
+          const result = results.find(r => r.fixture_id === hp.fixture_id)
+          if (!result) return []
+          const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+          if (!locked) return []
+          const fixture = fixtures.find(f => f.id === hp.fixture_id)
+          if (!fixture) return []
+          const home = teamMap[fixture.home_team_id]
+          const away = teamMap[fixture.away_team_id]
+          if (!home || !away) return []
+          const actualOutcome = getOutcome(result.home_goals, result.away_goals)
+          return [{
+            fixtureId: fixture.id,
+            date: fixture.kickoff_utc,
+            homeTeam: home, awayTeam: away,
+            modelHome: locked.home_goals, modelAway: locked.away_goals,
+            humanHome: hp.home_goals, humanAway: hp.away_goals,
+            comment: hp.comment,
+            actualHome: result.home_goals, actualAway: result.away_goals,
+            humanCorrect: getOutcome(hp.home_goals, hp.away_goals) === actualOutcome,
+            modelCorrect: getOutcome(locked.home_goals, locked.away_goals) === actualOutcome,
+          }]
+        })
         if (humanRows.length === 0) return null
-
-        const humanCorrectCount = humanRows.filter(r => r.humanCorrect).length
-        const modelCorrectCount = humanRows.filter(r => r.modelCorrect).length
-        const bothWrong = humanRows.filter(r => !r.humanCorrect && !r.modelCorrect).length
-        const humanAcc = humanRows.length > 0 ? Math.round((humanCorrectCount / humanRows.length) * 100) : 0
-        const modelAcc = humanRows.length > 0 ? Math.round((modelCorrectCount / humanRows.length) * 100) : 0
-
+        const humanAcc = Math.round((humanRows.filter(r => r.humanCorrect).length / humanRows.length) * 100)
+        const modelAcc = Math.round((humanRows.filter(r => r.modelCorrect).length / humanRows.length) * 100)
         return (
-          <>
-            {/* Section A */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-1.5">
-                  <Zap className="h-3.5 w-3.5 text-blue-500" />
-                  You vs The Model
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
-                  <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
-                    <div className="text-xs text-zinc-400">Total overrides</div>
-                    <div className="text-2xl font-bold text-zinc-900 mt-0.5">{humanRows.length}</div>
-                  </div>
-                  <div className="rounded-lg bg-blue-50 px-3 py-2.5">
-                    <div className="text-xs text-blue-500">You correct</div>
-                    <div className="text-2xl font-bold text-blue-700 mt-0.5">{humanCorrectCount} <span className="text-sm font-medium">({humanAcc}%)</span></div>
-                  </div>
-                  <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
-                    <div className="text-xs text-zinc-400">Model correct</div>
-                    <div className="text-2xl font-bold text-zinc-700 mt-0.5">{modelCorrectCount} <span className="text-sm font-medium">({modelAcc}%)</span></div>
-                  </div>
-                  <div className="rounded-lg bg-red-50 px-3 py-2.5">
-                    <div className="text-xs text-red-400">Both wrong</div>
-                    <div className="text-2xl font-bold text-red-600 mt-0.5">{bothWrong}</div>
-                  </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 text-blue-500" />You vs The Model</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="rounded-lg bg-blue-50 px-3 py-2.5 text-center">
+                  <div className="text-xs text-blue-500">You</div>
+                  <div className="text-2xl font-bold text-blue-700">{humanAcc}%</div>
                 </div>
-                <div className="text-xs text-zinc-500">
-                  {humanAcc > modelAcc
-                    ? `You're beating the model on your overrides! (+${humanAcc - modelAcc}% accuracy)`
-                    : humanAcc < modelAcc
-                    ? `The model is ahead on overridden matches (+${modelAcc - humanAcc}% for model)`
-                    : `You and the model are tied on overridden matches.`}
+                <div className="rounded-lg bg-zinc-50 px-3 py-2.5 text-center">
+                  <div className="text-xs text-zinc-400">Model</div>
+                  <div className="text-2xl font-bold text-zinc-700">{modelAcc}%</div>
                 </div>
-              </CardContent>
-            </Card>
-
-            {/* Section B: Override Log */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-1.5">
-                  <Brain className="h-3.5 w-3.5 text-purple-500" />
-                  Override Log
-                </CardTitle>
-              </CardHeader>
+                <div className="rounded-lg bg-zinc-50 px-3 py-2.5 text-center">
+                  <div className="text-xs text-zinc-400">Overrides</div>
+                  <div className="text-2xl font-bold text-zinc-700">{humanRows.length}</div>
+                </div>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-zinc-100 bg-zinc-50">
-                      <th className="px-4 py-2 text-left font-medium text-zinc-500">Date</th>
-                      <th className="px-4 py-2 text-left font-medium text-zinc-500">Match</th>
-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Model Pred</th>
-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Your Pred</th>
-                      <th className="px-4 py-2 text-left font-medium text-zinc-500">Comment</th>
-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Actual</th>
-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Who Won</th>
+                      <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+                      <th className="px-3 py-2 text-center font-medium text-zinc-500">Model</th>
+                      <th className="px-3 py-2 text-center font-medium text-zinc-500">You</th>
+                      <th className="px-3 py-2 text-left font-medium text-zinc-500">Comment</th>
+                      <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+                      <th className="px-3 py-2 text-center font-medium text-zinc-500">Winner</th>
                     </tr>
                   </thead>
                   <tbody>
                     {humanRows.map(row => {
-                      const whoWon = row.humanCorrect && row.modelCorrect
-                        ? 'both'
-                        : row.humanCorrect
-                        ? 'you'
-                        : row.modelCorrect
-                        ? 'model'
-                        : 'neither'
+                      const whoWon = row.humanCorrect && row.modelCorrect ? 'both' : row.humanCorrect ? 'you' : row.modelCorrect ? 'model' : 'neither'
                       return (
                         <tr key={row.fixtureId} className="border-b border-zinc-50">
-                          <td className="px-4 py-2.5 text-zinc-400 whitespace-nowrap">{formatDate(row.date)}</td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex items-center gap-1">
-                              <span>{row.homeTeam.flag_url}</span>
-                              <span className="font-medium text-zinc-900">{row.homeTeam.code}</span>
-                              <span className="text-zinc-300">vs</span>
-                              <span className="font-medium text-zinc-900">{row.awayTeam.code}</span>
-                              <span>{row.awayTeam.flag_url}</span>
-                            </div>
+                          <td className="px-3 py-2.5">
+                            <span>{row.homeTeam.flag_url}</span> {row.homeTeam.code} <span className="text-zinc-300">v</span> {row.awayTeam.code} <span>{row.awayTeam.flag_url}</span>
                           </td>
-                          <td className="px-4 py-2.5 text-center font-mono text-zinc-500">
-                            {row.modelHome.toFixed(1)}–{row.modelAway.toFixed(1)}
-                          </td>
-                          <td className="px-4 py-2.5 text-center font-mono font-semibold text-blue-600">
-                            {row.humanHome}–{row.humanAway}
-                          </td>
-                          <td className="px-4 py-2.5 text-zinc-500 max-w-[150px] truncate">
-                            {row.comment || <span className="italic text-zinc-300">—</span>}
-                          </td>
-                          <td className="px-4 py-2.5 text-center font-mono font-bold text-zinc-900">
-                            {row.actualHome}–{row.actualAway}
-                          </td>
-                          <td className="px-4 py-2.5 text-center">
+                          <td className="px-3 py-2.5 text-center font-mono text-zinc-500">{row.modelHome.toFixed(1)}–{row.modelAway.toFixed(1)}</td>
+                          <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-600">{row.humanHome}–{row.humanAway}</td>
+                          <td className="px-3 py-2.5 text-zinc-500 max-w-[120px] truncate">{row.comment || <span className="italic text-zinc-300">—</span>}</td>
+                          <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">{row.actualHome}–{row.actualAway}</td>
+                          <td className="px-3 py-2.5 text-center">
                             {whoWon === 'both' && <Badge variant="outline" className="text-green-600 border-green-300">Both</Badge>}
                             {whoWon === 'you' && <Badge variant="outline" className="text-blue-600 border-blue-300">You ⚡</Badge>}
                             {whoWon === 'model' && <Badge variant="outline" className="text-zinc-600">Model</Badge>}
@@ -414,100 +303,45 @@ export function AnalysisPanel() {
                   </tbody>
                 </table>
               </div>
-            </Card>
-          </>
-        )
-      })()}
-
-      {/* Section C: What the model learned from you (Model D) */}
-      {(() => {
-        const biases = computeHumanBiases()
-        const biasEntries = Object.entries(biases)
-
-        return (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-1.5">
-                <Brain className="h-3.5 w-3.5 text-indigo-500" />
-                What the model learned from you (Model D)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {biasEntries.length === 0 ? (
-                <p className="text-xs text-zinc-400 italic">
-                  Make your first override to start training Model D
-                </p>
-              ) : (
-                <>
-                  <p className="text-xs text-zinc-500 mb-3">
-                    Model D applies these corrections on top of Model B based on your override history.
-                  </p>
-                  <div className="space-y-2">
-                    {biasEntries.map(([teamId, delta]) => {
-                      const team = teamMap[teamId]
-                      return (
-                        <div key={teamId} className="flex items-center gap-3">
-                          <span className="text-sm">{team?.flag_url}</span>
-                          <span className="text-xs font-medium text-zinc-900 w-28 truncate">{team?.name ?? teamId}</span>
-                          <div className="flex-1 flex items-center gap-2">
-                            <div className="flex-1 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full ${delta > 0 ? 'bg-blue-400' : 'bg-red-400'}`}
-                                style={{ width: `${Math.min(100, Math.abs(delta) * 50)}%`, marginLeft: delta < 0 ? 'auto' : undefined }}
-                              />
-                            </div>
-                            <span className={`text-xs font-semibold tabular-nums w-12 text-right ${delta > 0 ? 'text-blue-600' : 'text-red-500'}`}>
-                              {delta > 0 ? '+' : ''}{delta.toFixed(2)} goals
-                            </span>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
             </CardContent>
           </Card>
         )
       })()}
 
-      {/* Model Calibration */}
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="h-4 w-4" /> Model Calibration</CardTitle></CardHeader>
-        <CardContent>
-          {calibration.every(c => c.matchCount < 3) ? (
-            <p className="text-sm text-zinc-400">Need at least 3 results per model to compute calibration factors.</p>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-xs text-zinc-500">Scale factors learned from actual vs predicted goals. ×1.00 = perfectly calibrated. &gt;1 = model was under-predicting, &lt;1 = over-predicting.</p>
-              <div className="grid grid-cols-3 gap-3">
-                {calibration.map(cal => (
-                  <div key={cal.model} className="rounded-lg border border-zinc-100 p-3 space-y-1">
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <Badge className={MODEL_COLORS[cal.model]}>Model {cal.model}</Badge>
-                      <span className="text-xs text-zinc-400">{cal.matchCount} matches</span>
+      {/* What the model learned from you */}
+      {(() => {
+        const biases = computeHumanBiases()
+        const biasEntries = Object.entries(biases)
+        if (biasEntries.length === 0) return null
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-1.5"><Brain className="h-3.5 w-3.5 text-indigo-500" />What the model learned (Model D)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-zinc-500 mb-3">Per-team goal adjustments derived from your override history.</p>
+              <div className="space-y-2">
+                {biasEntries.map(([teamId, delta]) => {
+                  const team = teamMap[teamId]
+                  return (
+                    <div key={teamId} className="flex items-center gap-3">
+                      <span className="text-sm">{team?.flag_url}</span>
+                      <span className="text-xs font-medium text-zinc-900 w-28 truncate">{team?.name ?? teamId}</span>
+                      <div className="flex-1 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+                        <div className={`h-full rounded-full ${delta > 0 ? 'bg-blue-400' : 'bg-red-400'}`}
+                          style={{ width: `${Math.min(100, Math.abs(delta) * 50)}%`, marginLeft: delta < 0 ? 'auto' : undefined }} />
+                      </div>
+                      <span className={`text-xs font-semibold tabular-nums w-16 text-right ${delta > 0 ? 'text-blue-600' : 'text-red-500'}`}>
+                        {delta > 0 ? '+' : ''}{delta.toFixed(2)} goals
+                      </span>
                     </div>
-                    {cal.matchCount < 3 ? (
-                      <p className="text-xs text-zinc-400">Not enough data</p>
-                    ) : (
-                      <>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-zinc-500">Home ×</span>
-                          <span className={`font-semibold tabular-nums ${cal.homeScale > 1.05 ? 'text-blue-600' : cal.homeScale < 0.95 ? 'text-red-500' : 'text-green-600'}`}>{cal.homeScale.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-zinc-500">Away ×</span>
-                          <span className={`font-semibold tabular-nums ${cal.awayScale > 1.05 ? 'text-blue-600' : cal.awayScale < 0.95 ? 'text-red-500' : 'text-green-600'}`}>{cal.awayScale.toFixed(2)}</span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
+                  )
+                })}
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        )
+      })()}
     </div>
   )
 }
