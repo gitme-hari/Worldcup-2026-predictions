@@ -431,6 +431,38 @@ export function computeHumanBiases(): Record<string, number> {
   return biases
 }
 
+export interface ModelCalibration {
+  model: 'A' | 'B' | 'C'
+  homeScale: number
+  awayScale: number
+  matchCount: number
+}
+
+export function computeCalibration(): ModelCalibration[] {
+  const results = getResults()
+  const lockedPreds = getLockedPredictions()
+
+  return (['A', 'B', 'C'] as const).map(model => {
+    const pairs = results.flatMap(r => {
+      const locked = lockedPreds.find(p => p.fixture_id === r.fixture_id && p.model === model)
+      if (!locked || locked.home_goals <= 0 || locked.away_goals <= 0) return []
+      return [{ predHome: locked.home_goals, predAway: locked.away_goals, actHome: r.home_goals, actAway: r.away_goals }]
+    })
+
+    if (pairs.length < 3) return { model, homeScale: 1, awayScale: 1, matchCount: pairs.length }
+
+    const homeScale = pairs.reduce((s, p) => s + p.actHome / p.predHome, 0) / pairs.length
+    const awayScale = pairs.reduce((s, p) => s + p.actAway / p.predAway, 0) / pairs.length
+
+    return {
+      model,
+      homeScale: Math.round(Math.min(2, Math.max(0.5, homeScale)) * 100) / 100,
+      awayScale: Math.round(Math.min(2, Math.max(0.5, awayScale)) * 100) / 100,
+      matchCount: pairs.length,
+    }
+  })
+}
+
 export function getBestModel(): 'A' | 'B' | 'C' | null {
   const metrics = computeMetrics()
   const withData = metrics.filter(m => m.total > 0)
