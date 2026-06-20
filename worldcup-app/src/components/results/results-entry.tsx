@@ -403,7 +403,7 @@ function ResultRow({
                   {existing.home_goals} – {existing.away_goals}
                 </span>
                 <span className="text-xs text-zinc-400">final</span>
-                <button onClick={handleDeleteResult} className="text-zinc-200 hover:text-red-400" title="Delete result">
+                <button onClick={handleDeleteResult} className="text-zinc-400 hover:text-red-500 active:text-red-600 p-1" title="Delete result">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
