@@ -290,9 +290,9 @@ export function generatePredictions(): SeedPrediction[] {
     // ── Model A: pure Elo + Poisson + venue ───────────────────────────────
     const { homeLambda: hlA, awayLambda: alA } = poissonGoals(hEloV, aEloV)
     const pA = calcOutcomeProbs(hlA, alA)
-    const hwA = shrink(pA.homeWin, 0.10)
-    const dwA = shrink(pA.draw, 0.10)
-    const awA = shrink(pA.awayWin, 0.10)
+    const hwA = shrink(pA.homeWin, 0.18)
+    const dwA = shrink(pA.draw, 0.18)
+    const awA = shrink(pA.awayWin, 0.18)
     const totA = hwA + dwA + awA
     predictions.push({
       id: `pred-A-${fixture.id}`, fixture_id: fixture.id, model: 'A',
@@ -312,9 +312,9 @@ export function generatePredictions(): SeedPrediction[] {
       0.12
     )
     const pB = calcOutcomeProbs(hlB, alB)
-    const hwB = shrink(pB.homeWin, 0.12)
-    const dwB = shrink(pB.draw, 0.12)
-    const awB = shrink(pB.awayWin, 0.12)
+    const hwB = shrink(pB.homeWin, 0.18)
+    const dwB = shrink(pB.draw, 0.18)
+    const awB = shrink(pB.awayWin, 0.18)
     const totB = hwB + dwB + awB
     predictions.push({
       id: `pred-B-${fixture.id}`, fixture_id: fixture.id, model: 'B',
