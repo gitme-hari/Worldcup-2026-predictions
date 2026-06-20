@@ -7,6 +7,9 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { TrendingUp, Target, CheckCircle, XCircle, Brain, Zap } from 'lucide-react'
 import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
+import { ModelHealth } from './model-health'
+import { DisagreementAnalysis } from './disagreement-analysis'
+import { UpcomingAssistant } from './upcoming-assistant'
 
 const MODELS = ['A', 'B', 'C'] as const
 
@@ -90,6 +93,10 @@ export function AnalysisPanel() {
   return (
     <div className="space-y-4">
       <SyncErrorBanner />
+
+      <ModelHealth />
+      <DisagreementAnalysis />
+      <UpcomingAssistant />
 
       {/* Model Leaderboard */}
       <Card>

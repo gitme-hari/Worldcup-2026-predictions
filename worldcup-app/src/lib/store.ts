@@ -16,7 +16,6 @@ const KEYS = {
   liveData: 'wc26_live_data',
   lockedPreds: 'wc26_locked_preds',
   humanPreds: 'wc26_human_preds',
-  tabpfnPreds: 'wc26_tabpfn_preds',
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -111,25 +110,6 @@ export function getPredictions(): SeedPrediction[] {
     })
   }
 
-  // Client-side only: overlay TabPFN predictions on Model C
-  if (typeof window !== 'undefined') {
-    const tabpfnPreds = getTabPFNPredictions()
-    if (tabpfnPreds.length > 0) {
-      const tabpfnMap = Object.fromEntries(tabpfnPreds.map(p => [p.fixture_id, p]))
-      return basePreds.map(pred => {
-        if (pred.model !== 'C') return pred
-        const tp = tabpfnMap[pred.fixture_id]
-        if (!tp) return pred
-        return {
-          ...pred,
-          home_win_prob: tp.home_win_prob,
-          draw_prob: tp.draw_prob,
-          away_win_prob: tp.away_win_prob,
-        }
-      })
-    }
-  }
-
   return basePreds
 }
 
@@ -137,23 +117,6 @@ export function getPredictionsForFixture(fixtureId: string): SeedPrediction[] {
   return getPredictions().filter(p => p.fixture_id === fixtureId)
 }
 
-// --- TabPFN Predictions ---
-export interface TabPFNPrediction {
-  fixture_id: string
-  home_win_prob: number
-  draw_prob: number
-  away_win_prob: number
-  fetched_at: string
-}
-
-export function getTabPFNPredictions(): TabPFNPrediction[] {
-  return load<TabPFNPrediction[]>(KEYS.tabpfnPreds, [])
-}
-
-export function saveTabPFNPredictions(preds: Omit<TabPFNPrediction, 'fetched_at'>[]) {
-  const now = new Date().toISOString()
-  save(KEYS.tabpfnPreds, preds.map(p => ({ ...p, fetched_at: now })))
-}
 
 // --- Config ---
 const DEFAULT_CONFIG: ModelConfig = {
