@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiases, computeCalibration } from '@/lib/store'
+import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiasData, computeCalibration } from '@/lib/store'
 import { getOutcome } from '@/lib/models'
 import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -308,36 +308,107 @@ export function AnalysisPanel() {
         )
       })()}
 
-      {/* What the model learned from you */}
-      {(() => {
-        const biases = computeHumanBiases()
-        const biasEntries = Object.entries(biases)
-        if (biasEntries.length === 0) return null
+      {/* What the model learned from you (Model D) */}
+      {humanPredsList.length > 0 && (() => {
+        const biasData = computeHumanBiasData()
+        const qualified = biasData.filter(b => b.qualified)
         return (
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-1.5"><Brain className="h-3.5 w-3.5 text-indigo-500" />What the model learned (Model D)</CardTitle>
+              <CardTitle className="flex items-center gap-1.5">
+                <Brain className="h-3.5 w-3.5 text-indigo-500" />What the model learned (Model D)
+              </CardTitle>
             </CardHeader>
-            <CardContent>
-              <p className="text-xs text-zinc-500 mb-3">Per-team goal adjustments derived from your override history.</p>
-              <div className="space-y-2">
-                {biasEntries.map(([teamId, delta]) => {
-                  const team = teamMap[teamId]
-                  return (
-                    <div key={teamId} className="flex items-center gap-3">
-                      <span className="text-sm">{team?.flag_url}</span>
-                      <span className="text-xs font-medium text-zinc-900 w-28 truncate">{team?.name ?? teamId}</span>
-                      <div className="flex-1 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
-                        <div className={`h-full rounded-full ${delta > 0 ? 'bg-blue-400' : 'bg-red-400'}`}
-                          style={{ width: `${Math.min(100, Math.abs(delta) * 50)}%`, marginLeft: delta < 0 ? 'auto' : undefined }} />
+            <CardContent className="space-y-4">
+              {qualified.length === 0 ? (
+                <div className="rounded-md bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
+                  <p className="font-medium text-zinc-700 mb-1">Not enough data yet</p>
+                  <p>Model D requires at least 3 custom overrides per team to compute a reliable bias.{' '}
+                  {biasData.length === 0
+                    ? 'No overrides recorded yet.'
+                    : `Current samples: ${biasData.map(b => `${b.teamId.toUpperCase()} (${b.samples})`).join(', ')}.`}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500">Per-team goal adjustments vs original model prediction. Min 3 overrides required.</p>
+                  {qualified.map(({ teamId, avg, samples }) => {
+                    const team = teamMap[teamId]
+                    return (
+                      <div key={teamId} className="flex items-center gap-3">
+                        <span className="text-sm">{team?.flag_url}</span>
+                        <span className="text-xs font-medium text-zinc-900 w-24 truncate">{team?.name ?? teamId}</span>
+                        <div className="flex-1 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+                          <div className={`h-full rounded-full ${avg > 0 ? 'bg-blue-400' : 'bg-red-400'}`}
+                            style={{ width: `${Math.min(100, Math.abs(avg) * 50)}%`, marginLeft: avg < 0 ? 'auto' : undefined }} />
+                        </div>
+                        <span className={`text-xs font-semibold tabular-nums w-16 text-right ${avg > 0 ? 'text-blue-600' : 'text-red-500'}`}>
+                          {avg > 0 ? '+' : ''}{avg.toFixed(2)} goals
+                        </span>
+                        <span className="text-xs text-zinc-400 w-12 text-right">{samples} picks</span>
                       </div>
-                      <span className={`text-xs font-semibold tabular-nums w-16 text-right ${delta > 0 ? 'text-blue-600' : 'text-red-500'}`}>
-                        {delta > 0 ? '+' : ''}{delta.toFixed(2)} goals
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Debug table: all custom overrides with original model prediction */}
+              <details className="border-t border-zinc-100 pt-3">
+                <summary className="text-xs text-zinc-400 cursor-pointer hover:text-zinc-600 select-none">
+                  All custom overrides ({humanPredsList.length}) — click to inspect
+                </summary>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-zinc-100 bg-zinc-50">
+                        <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+                        <th className="px-3 py-2 text-center font-medium text-zinc-500">Model pred</th>
+                        <th className="px-3 py-2 text-center font-medium text-zinc-500">Your pick</th>
+                        <th className="px-3 py-2 text-center font-medium text-zinc-500">Δ goals</th>
+                        <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {humanPredsList.map(hp => {
+                        const fixture = fixtures.find(f => f.id === hp.fixture_id)
+                        if (!fixture) return null
+                        const home = teamMap[fixture.home_team_id]
+                        const away = teamMap[fixture.away_team_id]
+                        const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+                        const origPred = locked
+                          ? allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === locked.model)
+                          : null
+                        const result = results.find(r => r.fixture_id === hp.fixture_id)
+                        const dH = origPred ? hp.home_goals - origPred.home_goals : null
+                        const dA = origPred ? hp.away_goals - origPred.away_goals : null
+                        return (
+                          <tr key={hp.fixture_id} className="border-b border-zinc-50">
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {home?.flag_url} {home?.code} v {away?.code} {away?.flag_url}
+                            </td>
+                            <td className="px-3 py-2 text-center font-mono text-zinc-400">
+                              {origPred ? `${origPred.home_goals.toFixed(1)}–${origPred.away_goals.toFixed(1)}` : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-center font-mono font-semibold text-blue-600">
+                              {hp.home_goals}–{hp.away_goals}
+                            </td>
+                            <td className="px-3 py-2 text-center font-mono">
+                              {dH !== null && dA !== null ? (
+                                <span className={dH + dA > 0 ? 'text-blue-500' : dH + dA < 0 ? 'text-red-500' : 'text-zinc-400'}>
+                                  {dH >= 0 ? '+' : ''}{dH.toFixed(1)} / {dA >= 0 ? '+' : ''}{dA.toFixed(1)}
+                                </span>
+                              ) : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-center font-mono font-bold text-zinc-900">
+                              {result ? `${result.home_goals}–${result.away_goals}` : <span className="text-zinc-300">pending</span>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
             </CardContent>
           </Card>
         )
