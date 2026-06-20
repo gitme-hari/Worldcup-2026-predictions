@@ -359,12 +359,22 @@ export function deleteHumanPrediction(fixtureId: string) {
   save(KEYS.humanPreds, getHumanPredictions().filter(p => p.fixture_id !== fixtureId))
 }
 
-// Returns per-team bias corrections learned from human overrides
-// For each team the user consistently over/under-predicted vs model,
-// compute an average delta that can be used as a Model D adjustment
-export function computeHumanBiases(): Record<string, number> {
+// Per-team summary for Model D display
+export interface HumanBiasSummary {
+  teamId: string
+  samples: number
+  avg: number
+  // true only when samples >= 3 and |avg| > 0.01 — the minimum for reliable bias
+  qualified: boolean
+}
+
+// Returns per-team bias summaries derived from human overrides vs original model predictions.
+// Bug fix: previously compared human pick to locked pick, which is always 0 for custom picks
+// because the lock stores the same custom value. Now compares to the seed model prediction.
+export function computeHumanBiasData(): HumanBiasSummary[] {
   const humanPreds = getHumanPredictions()
   const lockedPreds = getLockedPredictions()
+  const allPreds = getPredictions()
   const fixtures = getFixtures()
 
   const teamDeltas: Record<string, number[]> = {}
@@ -375,24 +385,40 @@ export function computeHumanBiases(): Record<string, number> {
     const fixture = fixtures.find(f => f.id === hp.fixture_id)
     if (!fixture) continue
 
-    const homeDelta = hp.home_goals - locked.home_goals
-    const awayDelta = hp.away_goals - locked.away_goals
+    // Compare human pick to the ORIGINAL model prediction, not the locked value.
+    // When pick_source='custom', locked.home_goals === hp.home_goals (same value),
+    // so that comparison always produces delta=0. The seed prediction is the correct baseline.
+    const modelKey = locked.model as 'A' | 'B' | 'C'
+    const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === modelKey)
+    if (!origPred) continue
+
+    const homeDelta = hp.home_goals - origPred.home_goals
+    const awayDelta = hp.away_goals - origPred.away_goals
 
     if (!teamDeltas[fixture.home_team_id]) teamDeltas[fixture.home_team_id] = []
     teamDeltas[fixture.home_team_id].push(homeDelta)
-
     if (!teamDeltas[fixture.away_team_id]) teamDeltas[fixture.away_team_id] = []
     teamDeltas[fixture.away_team_id].push(awayDelta)
   }
 
-  const biases: Record<string, number> = {}
-  for (const [teamId, deltas] of Object.entries(teamDeltas)) {
+  return Object.entries(teamDeltas).map(([teamId, deltas]) => {
     const avg = deltas.reduce((s, d) => s + d, 0) / deltas.length
-    if (Math.abs(avg) > 0.01) {
-      biases[teamId] = Math.round(avg * 100) / 100
+    return {
+      teamId,
+      samples: deltas.length,
+      avg: Math.round(avg * 100) / 100,
+      qualified: deltas.length >= 3 && Math.abs(avg) > 0.01,
     }
+  })
+}
+
+// Kept for backward compatibility — returns only qualified teams as a simple map.
+export function computeHumanBiases(): Record<string, number> {
+  const result: Record<string, number> = {}
+  for (const entry of computeHumanBiasData()) {
+    if (entry.qualified) result[entry.teamId] = entry.avg
   }
-  return biases
+  return result
 }
 
 export interface ModelCalibration {
