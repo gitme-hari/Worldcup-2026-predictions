@@ -10,7 +10,7 @@ export function SyncStatus() {
   async function handleCheck() {
     setStatus('loading')
     const data = await fetchAllFromCloud()
-    if (!data) {
+    if (!data.ok) {
       setStatus('error')
       return
     }
