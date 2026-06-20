@@ -331,6 +331,7 @@ export interface LockedPrediction {
   draw_prob: number
   away_win_prob: number
   locked_at: string
+  pick_source?: 'raw' | 'calibrated' | 'custom'
 }
 
 export function getLockedPredictions(): LockedPrediction[] {
