@@ -230,12 +230,11 @@ const MODEL_C_DEFENSE_BIAS: Record<string, number> = {
 }
 
 function poissonGoals(eloHome: number, eloAway: number, homeAdv = 0.15) {
-  // Exponential-linear model: realistic WC scores, no blow-outs from Elo gaps
-  const K = 0.0025
-  const BASE = 1.25
+  const K = 0.0020
+  const BASE = 1.12
   const diff = eloHome - eloAway
-  const homeLambda = Math.min(Math.max(BASE * Math.exp(K * diff) + homeAdv, 0.3), 3.5)
-  const awayLambda = Math.min(Math.max(BASE * Math.exp(-K * diff), 0.3), 3.5)
+  const homeLambda = Math.min(Math.max(BASE * Math.exp(K * diff) + homeAdv / 2, 0.3), 3.0)
+  const awayLambda = Math.min(Math.max(BASE * Math.exp(-K * diff) - homeAdv / 2, 0.3), 3.0)
   return { homeLambda, awayLambda }
 }
 
@@ -289,14 +288,18 @@ export function generatePredictions(): SeedPrediction[] {
 
     // ── Model A: pure Elo + Poisson + venue ───────────────────────────────
     const { homeLambda: hlA, awayLambda: alA } = poissonGoals(hEloV, aEloV)
-    const pA = calcOutcomeProbs(hlA, alA)
+    const pAraw = calcOutcomeProbs(hlA, alA)
+    const pAhw = shrink(pAraw.homeWin, 0.10)
+    const pAdw = shrink(pAraw.draw, 0.10)
+    const pAaw = shrink(pAraw.awayWin, 0.10)
+    const pAtot = pAhw + pAdw + pAaw
     predictions.push({
       id: `pred-A-${fixture.id}`, fixture_id: fixture.id, model: 'A',
       home_goals: Math.round(hlA * 10) / 10,
       away_goals: Math.round(alA * 10) / 10,
-      home_win_prob: Math.round(pA.homeWin * 100) / 100,
-      draw_prob: Math.round(pA.draw * 100) / 100,
-      away_win_prob: Math.round(pA.awayWin * 100) / 100,
+      home_win_prob: Math.round((pAhw / pAtot) * 100) / 100,
+      draw_prob: Math.round((pAdw / pAtot) * 100) / 100,
+      away_win_prob: Math.round((pAaw / pAtot) * 100) / 100,
     })
 
     // ── Model B: ML — Elo adjusted by tournament performance history + venue ─
@@ -307,14 +310,18 @@ export function generatePredictions(): SeedPrediction[] {
       aEloV * (1 + aBias),
       0.12
     )
-    const pB = calcOutcomeProbs(hlB, alB)
+    const pBraw = calcOutcomeProbs(hlB, alB)
+    const pBhw = shrink(pBraw.homeWin, 0.12)
+    const pBdw = shrink(pBraw.draw, 0.12)
+    const pBaw = shrink(pBraw.awayWin, 0.12)
+    const pBtot = pBhw + pBdw + pBaw
     predictions.push({
       id: `pred-B-${fixture.id}`, fixture_id: fixture.id, model: 'B',
       home_goals: Math.round(hlB * 10) / 10,
       away_goals: Math.round(alB * 10) / 10,
-      home_win_prob: Math.round(pB.homeWin * 100) / 100,
-      draw_prob: Math.round(pB.draw * 100) / 100,
-      away_win_prob: Math.round(pB.awayWin * 100) / 100,
+      home_win_prob: Math.round((pBhw / pBtot) * 100) / 100,
+      draw_prob: Math.round((pBdw / pBtot) * 100) / 100,
+      away_win_prob: Math.round((pBaw / pBtot) * 100) / 100,
     })
 
     // ── Model C: market-calibrated base + venue ───────────────────────────
