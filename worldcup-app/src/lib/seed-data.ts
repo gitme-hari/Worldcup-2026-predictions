@@ -245,17 +245,30 @@ function poissonProb(lambda: number, k: number): number {
   return p
 }
 
+// Dixon-Coles correction factor for low-scoring scorelines.
+// Independent Poisson overestimates 1-0/0-1 and underestimates 0-0/1-1.
+// rho=0.13 is the value estimated in the original Dixon & Coles (1997) paper.
+function dixonColesWeight(h: number, a: number, hl: number, al: number, rho = 0.13): number {
+  if (h === 0 && a === 0) return 1 - hl * al * rho
+  if (h === 1 && a === 0) return 1 + al * rho
+  if (h === 0 && a === 1) return 1 + hl * rho
+  if (h === 1 && a === 1) return 1 - rho
+  return 1
+}
+
 function calcOutcomeProbs(hl: number, al: number) {
   let hw = 0, d = 0, aw = 0
   for (let h = 0; h <= 8; h++) {
     for (let a = 0; a <= 8; a++) {
-      const p = poissonProb(hl, h) * poissonProb(al, a)
+      const p = poissonProb(hl, h) * poissonProb(al, a) * dixonColesWeight(h, a, hl, al)
       if (h > a) hw += p
       else if (h === a) d += p
       else aw += p
     }
   }
-  return { homeWin: hw, draw: d, awayWin: aw }
+  // Renormalise: Dixon-Coles weights shift total probability slightly off 1
+  const total = hw + d + aw
+  return { homeWin: hw / total, draw: d / total, awayWin: aw / total }
 }
 
 function shrink(p: number, f = 0.18): number {
