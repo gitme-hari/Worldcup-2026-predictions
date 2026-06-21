@@ -1,10 +1,19 @@
 'use client'
 import { useState } from 'react'
-import { getResults, getLockedPredictions, getHumanPredictions } from '@/lib/store'
+import { getResults, getLockedPredictions, getHumanPredictions, getFixtures } from '@/lib/store'
 import { supabase } from '@/lib/supabase'
 import { syncLockedPred } from '@/lib/sync'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Search, RefreshCw } from 'lucide-react'
+import { SEED_TEAMS } from '@/lib/seed-data'
+
+interface ResultGap {
+  fixture_id: string
+  home_team: string
+  away_team: string
+  local: string | null
+  cloud: string | null
+}
 
 interface ResyncResult {
   attempted: number
@@ -46,6 +55,10 @@ interface AuditResult {
     humanMissingFromCloud: string[]
     humanMissingLocally: string[]
   }
+  resultGaps: {
+    missingFromCloud: ResultGap[]
+    missingLocally: ResultGap[]
+  }
   timestamp: string
 }
 
@@ -54,8 +67,12 @@ async function runAudit(): Promise<AuditResult> {
   const localResults     = getResults()
   const localLocked      = getLockedPredictions()
   const localHuman       = getHumanPredictions()
+  const fixtures         = getFixtures()
   const localLockedIds   = localLocked.map(p => p.fixture_id)
   const localHumanIds    = localHuman.map(p => p.fixture_id)
+
+  const teamMap = Object.fromEntries(SEED_TEAMS.map(t => [t.id, t.name]))
+  const fixtureMap = Object.fromEntries(fixtures.map(f => [f.id, f]))
 
   // ── Cloud ──────────────────────────────────────────────────────────────────
   let cloudLockedIds: string[]   = []
@@ -64,15 +81,19 @@ async function runAudit(): Promise<AuditResult> {
   let cloudLockedCount           = 0
   let cloudHumanCount            = 0
   let fetchError: string | null  = null
+  let cloudResultRows: { fixture_id: string; home_goals: number; away_goals: number }[] = []
 
   try {
     const [r1, r2, r3] = await Promise.all([
-      supabase.from('actual_results').select('fixture_id'),
+      supabase.from('actual_results').select('fixture_id, home_goals, away_goals'),
       supabase.from('locked_predictions').select('fixture_id'),
       supabase.from('human_predictions').select('fixture_id'),
     ])
     if (r1.error) { fetchError = `actual_results: ${r1.error.message}`; }
-    else cloudResultsCount = (r1.data ?? []).length
+    else {
+      cloudResultRows = r1.data ?? []
+      cloudResultsCount = cloudResultRows.length
+    }
 
     if (r2.error) { fetchError = (fetchError ? fetchError + ' | ' : '') + `locked_predictions: ${r2.error.message}` }
     else { cloudLockedIds = (r2.data ?? []).map(r => r.fixture_id); cloudLockedCount = cloudLockedIds.length }
@@ -82,6 +103,42 @@ async function runAudit(): Promise<AuditResult> {
   } catch (e) {
     fetchError = e instanceof Error ? e.message : 'Unknown error'
   }
+
+  // ── Result gap analysis ────────────────────────────────────────────────────
+  const cloudResultMap = Object.fromEntries(cloudResultRows.map(r => [r.fixture_id, r]))
+  const localResultMap = Object.fromEntries(localResults.map(r => [r.fixture_id, r]))
+
+  function teamNames(fixtureId: string): { home: string; away: string } {
+    const fix = fixtureMap[fixtureId]
+    if (!fix) return { home: fixtureId, away: '' }
+    return { home: teamMap[fix.home_team_id] ?? fix.home_team_id, away: teamMap[fix.away_team_id] ?? fix.away_team_id }
+  }
+
+  const resultsMissingFromCloud: ResultGap[] = localResults
+    .filter(r => !cloudResultMap[r.fixture_id])
+    .map(r => {
+      const { home, away } = teamNames(r.fixture_id)
+      return {
+        fixture_id: r.fixture_id,
+        home_team: home,
+        away_team: away,
+        local: `${r.home_goals}–${r.away_goals}`,
+        cloud: null,
+      }
+    })
+
+  const resultsMissingLocally: ResultGap[] = cloudResultRows
+    .filter(r => !localResultMap[r.fixture_id])
+    .map(r => {
+      const { home, away } = teamNames(r.fixture_id)
+      return {
+        fixture_id: r.fixture_id,
+        home_team: home,
+        away_team: away,
+        local: null,
+        cloud: `${r.home_goals}–${r.away_goals}`,
+      }
+    })
 
   // ── Schema probe — check if new columns exist in locked_predictions ─────────
   let hasOverrideReason: boolean | null   = null
@@ -178,8 +235,40 @@ async function runAudit(): Promise<AuditResult> {
     schemaProbe: { hasOverrideReason, hasPoolRecHome, hasPoolRecAway, pickSourceValues, probeError },
     syncProbe:   { upsertError, upsertTested },
     gaps: { lockedMissingFromCloud, lockedMissingLocally, humanMissingFromCloud, humanMissingLocally },
+    resultGaps: { missingFromCloud: resultsMissingFromCloud, missingLocally: resultsMissingLocally },
     timestamp: new Date().toISOString(),
   }
+}
+
+function ResultGapTable({ gaps, missingFrom }: { gaps: ResultGap[]; missingFrom: 'cloud' | 'local' }) {
+  return (
+    <table className="w-full border-collapse">
+      <thead>
+        <tr className="text-zinc-500 border-b border-zinc-200">
+          <th className="text-left py-1 pr-2 font-medium">Fixture</th>
+          <th className="text-left py-1 pr-2 font-medium">Home</th>
+          <th className="text-left py-1 pr-2 font-medium">Away</th>
+          <th className="text-left py-1 pr-2 font-medium">Local</th>
+          <th className="text-left py-1 font-medium">Cloud</th>
+        </tr>
+      </thead>
+      <tbody>
+        {gaps.map(g => (
+          <tr key={g.fixture_id} className={`border-b border-zinc-100 ${missingFrom === 'cloud' ? 'bg-amber-50' : 'bg-blue-50'}`}>
+            <td className="py-1 pr-2 font-mono text-zinc-500">{g.fixture_id}</td>
+            <td className="py-1 pr-2 text-zinc-700">{g.home_team}</td>
+            <td className="py-1 pr-2 text-zinc-700">{g.away_team}</td>
+            <td className="py-1 pr-2 font-mono">
+              {g.local ? <span className="text-zinc-900">{g.local}</span> : <span className="text-zinc-400">—</span>}
+            </td>
+            <td className="py-1 font-mono">
+              {g.cloud ? <span className="text-zinc-900">{g.cloud}</span> : <span className="text-zinc-400">—</span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
 }
 
 function ColStatus({ ok, label }: { ok: boolean | null; label: string }) {
@@ -284,6 +373,9 @@ export function SyncAudit() {
                                    schemaProbe.hasPoolRecHome === false ||
                                    schemaProbe.hasPoolRecAway === false
 
+          const { resultGaps } = result
+          const hasResultGaps = resultGaps.missingFromCloud.length > 0 || resultGaps.missingLocally.length > 0
+
           return (
             <div className="space-y-4 text-xs">
               <p className="text-zinc-400">Audit completed at {new Date(result.timestamp).toLocaleTimeString('en-GB')}</p>
@@ -313,6 +405,36 @@ export function SyncAudit() {
                 </div>
                 {cloud.fetchError && (
                   <p className="mt-1 text-red-600 bg-red-50 rounded px-2 py-1">Cloud fetch error: {cloud.fetchError}</p>
+                )}
+              </div>
+
+              {/* ── Results gap ──────────────────────────────────────────── */}
+              <div>
+                <p className="font-semibold text-zinc-700 mb-2">
+                  Results {!hasResultGaps && <span className="text-green-600 font-normal">— in sync</span>}
+                  {hasResultGaps && <span className="text-red-500 font-normal"> — mismatches found</span>}
+                </p>
+                {!hasResultGaps && (
+                  <div className="space-y-0.5">
+                    <p className="text-green-600">✓ All local results exist in cloud</p>
+                    <p className="text-green-600">✓ No cloud results missing locally</p>
+                  </div>
+                )}
+                {resultGaps.missingFromCloud.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-zinc-500 font-medium mb-1">
+                      Missing from cloud ({resultGaps.missingFromCloud.length})
+                    </p>
+                    <ResultGapTable gaps={resultGaps.missingFromCloud} missingFrom="cloud" />
+                  </div>
+                )}
+                {resultGaps.missingLocally.length > 0 && (
+                  <div>
+                    <p className="text-zinc-500 font-medium mb-1">
+                      Missing locally ({resultGaps.missingLocally.length})
+                    </p>
+                    <ResultGapTable gaps={resultGaps.missingLocally} missingFrom="local" />
+                  </div>
                 )}
               </div>
 
