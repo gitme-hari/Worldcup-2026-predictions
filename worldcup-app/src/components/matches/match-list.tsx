@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { ChevronRight, Lock } from 'lucide-react'
 import { FixturePredictionPanel } from './fixture-prediction-panel'
+import type { LockedPrediction } from '@/lib/store'
 
 const GROUPS    = ['All', ...'ABCDEFGHIJKL'.split('')]
 const MODELS    = [
@@ -56,11 +57,37 @@ function poolScore(predH: number, predA: number, actH: number, actA: number): nu
   return 0
 }
 
-function sourceLabel(source: string | undefined): string {
-  if (source === 'pool_recommendation') return 'Pool pick'
-  if (source === 'custom') return 'Custom override'
-  if (source === 'calibrated') return 'Calibrated pick'
-  return 'Model pick'
+// ── Shared chips ────────────────────────────────────────────────────────────
+
+function SourceChip({ source }: { source?: string }) {
+  if (source === 'pool_recommendation')
+    return <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">Pool pick</span>
+  if (source === 'custom')
+    return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Custom</span>
+  if (source === 'backfilled')
+    return <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">Backfilled</span>
+  return <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">Model pick</span>
+}
+
+function PtsChip({ pts }: { pts: number }) {
+  const map: Record<number, { label: string; cls: string }> = {
+    4: { label: '4 pts · Exact!',       cls: 'bg-green-100 text-green-700' },
+    2: { label: '2 pts · Winner+GD',    cls: 'bg-blue-100 text-blue-700'   },
+    1: { label: '1 pt · Winner',        cls: 'bg-zinc-100 text-zinc-600'   },
+    0: { label: '0 pts · Miss',         cls: 'bg-red-100 text-red-600'     },
+  }
+  const c = map[pts] ?? map[0]
+  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${c.cls}`}>{c.label}</span>
+}
+
+function MatchMeta({ fix }: { fix: SeedFixture }) {
+  return (
+    <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
+      {fix.group && <span className="rounded border border-zinc-100 px-1 py-0.5">Grp {fix.group}</span>}
+      {fix.matchday && <span>MD{fix.matchday}</span>}
+      <span>{formatDate(fix.kickoff_utc)}</span>
+    </div>
+  )
 }
 
 // ── Per-row state renderers ─────────────────────────────────────────────────
@@ -72,15 +99,10 @@ function NeedsPickRow({ fix, modelH, modelA, modelLabel, poolH, poolA }: {
 }) {
   const hasPRec = poolH !== undefined && poolA !== undefined
   return (
-    <div className="px-3 py-3 space-y-2">
+    <div className="px-3 py-2.5 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-          {fix.group && <span className="rounded border border-zinc-200 px-1.5 py-0.5">Grp {fix.group}</span>}
-          {fix.matchday && <span>MD{fix.matchday}</span>}
-          <span>{formatDate(fix.kickoff_utc)}</span>
-          <span>{formatTime(fix.kickoff_utc)}</span>
-        </div>
-        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+        <MatchMeta fix={fix} />
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
           Needs Pick
         </span>
       </div>
@@ -113,34 +135,36 @@ function NeedsPickRow({ fix, modelH, modelA, modelLabel, poolH, poolA }: {
   )
 }
 
-function LockedRow({ fix, lockedH, lockedA, source, poolH, poolA }: {
+function LockedRow({ fix, locked, poolH, poolA }: {
   fix: SeedFixture
-  lockedH: number; lockedA: number; source: string | undefined
+  locked: LockedPrediction
   poolH?: number; poolA?: number
 }) {
-  const differsFromRec = poolH !== undefined && poolA !== undefined &&
-    (lockedH !== poolH || lockedA !== poolA)
+  const rH = Math.round(locked.home_goals)
+  const rA = Math.round(locked.away_goals)
+  const isDecimal = locked.home_goals !== rH || locked.away_goals !== rA
+  const differsFromRec = poolH !== undefined && poolA !== undefined && (rH !== poolH || rA !== poolA)
+
   return (
-    <div className="px-3 py-3 space-y-2">
+    <div className="px-3 py-2.5 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-          {fix.group && <span className="rounded border border-zinc-200 px-1.5 py-0.5">Grp {fix.group}</span>}
-          {fix.matchday && <span>MD{fix.matchday}</span>}
-          <span>{formatDate(fix.kickoff_utc)}</span>
-          <span>{formatTime(fix.kickoff_utc)}</span>
-        </div>
-        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
+        <MatchMeta fix={fix} />
+        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">
           ✓ Locked
         </span>
       </div>
-      <div className="flex items-center justify-between gap-2">
-        <div className="space-y-0.5">
-          <p className="text-sm font-bold text-zinc-900">
-            Your pick: <span className="tabular-nums">{lockedH}–{lockedA}</span>
-          </p>
-          <p className="text-xs text-zinc-400">{sourceLabel(source)}</p>
+      <div className="flex items-center justify-between gap-2 min-w-0">
+        <div className="space-y-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-base font-bold text-zinc-900 tabular-nums">{rH}–{rA}</span>
+            <SourceChip source={locked.pick_source} />
+            {locked.model && <span className="text-[10px] text-zinc-400">Mdl {locked.model}</span>}
+          </div>
+          {isDecimal && (
+            <p className="text-[10px] text-zinc-400">Model value: {locked.home_goals.toFixed(1)}–{locked.away_goals.toFixed(1)}</p>
+          )}
           {differsFromRec && (
-            <p className="text-xs text-zinc-400">Pool rec: {poolH}–{poolA}</p>
+            <p className="text-[10px] text-zinc-400">Pool rec: {poolH}–{poolA}</p>
           )}
         </div>
         <ChevronRight className="h-4 w-4 text-zinc-300 shrink-0" />
@@ -149,49 +173,72 @@ function LockedRow({ fix, lockedH, lockedA, source, poolH, poolA }: {
   )
 }
 
-function FinalRow({ fix, actualH, actualA, lockedH, lockedA, source }: {
+function FinalRow({ fix, actualH, actualA, locked }: {
   fix: SeedFixture
   actualH: number; actualA: number
-  lockedH?: number; lockedA?: number; source?: string
+  locked?: LockedPrediction
 }) {
-  const myPts = lockedH !== undefined && lockedA !== undefined
-    ? poolScore(lockedH, lockedA, actualH, actualA) : null
-
-  const ptsLabel = myPts === null ? null
-    : myPts === 4 ? '4 pts · Exact!'
-    : myPts === 2 ? '2 pts · Correct winner + GD'
-    : myPts === 1 ? '1 pt · Correct winner'
-    : '0 pts'
-  const ptsColor = myPts === 4 ? 'text-green-600 font-semibold'
-    : myPts === 2 ? 'text-blue-600 font-semibold'
-    : myPts === 1 ? 'text-zinc-600'
-    : 'text-red-500'
-
-  return (
-    <div className="px-3 py-3 space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-          {fix.group && <span className="rounded border border-zinc-200 px-1.5 py-0.5">Grp {fix.group}</span>}
-          {fix.matchday && <span>MD{fix.matchday}</span>}
-          <span>{formatDate(fix.kickoff_utc)}</span>
+  if (!locked) {
+    return (
+      <div className="px-3 py-2.5 flex items-center gap-3">
+        <div className="shrink-0">
+          <p className="text-[10px] uppercase tracking-wide text-zinc-400 font-medium mb-0.5">Actual</p>
+          <p className="text-2xl font-black text-zinc-900 tabular-nums leading-none">{actualH}–{actualA}</p>
         </div>
-        <Badge variant="success">Final</Badge>
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        <div className="space-y-0.5">
-          <p className="text-xl font-black text-zinc-900 tabular-nums">{actualH}–{actualA}</p>
-          {lockedH !== undefined && lockedA !== undefined && (
-            <p className="text-xs text-zinc-400">
-              My pick: <span className="font-medium text-zinc-600">{lockedH}–{lockedA}</span>
-              {source === 'backfilled' && <span className="ml-1 rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-500">backfilled</span>}
-              {ptsLabel && <span className={` ml-1.5 ${ptsColor}`}>· {ptsLabel}</span>}
-            </p>
-          )}
-          {lockedH === undefined && (
-            <p className="text-xs text-zinc-300">No pick submitted</p>
-          )}
+        <div className="flex-1 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2">
+          <p className="text-xs font-semibold text-amber-700">No pick recorded</p>
+          <p className="text-[10px] text-amber-600 mt-0.5">Tap to backfill this result</p>
         </div>
         <ChevronRight className="h-4 w-4 text-zinc-300 shrink-0" />
+      </div>
+    )
+  }
+
+  // Always display and score using rounded integers — model decimal is secondary context
+  const rH  = Math.round(locked.home_goals)
+  const rA  = Math.round(locked.away_goals)
+  const pts = poolScore(rH, rA, actualH, actualA)
+  const isDecimal = locked.home_goals !== rH || locked.away_goals !== rA
+
+  return (
+    <div className="px-3 py-2.5">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+        {/* Block 1: Actual */}
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-zinc-400 font-medium mb-0.5">Actual</p>
+          <p className="text-2xl font-black text-zinc-900 tabular-nums leading-none">{actualH}–{actualA}</p>
+        </div>
+
+        {/* Block 2: My Pick */}
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-zinc-400 font-medium mb-0.5">My Pick</p>
+          <p className="text-xl font-bold text-zinc-800 tabular-nums leading-none">{rH}–{rA}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            <SourceChip source={locked.pick_source} />
+            {locked.model && <span className="text-[10px] text-zinc-400">Mdl {locked.model}</span>}
+          </div>
+        </div>
+
+        {/* Block 3: Points */}
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-zinc-400 font-medium mb-1">Points</p>
+          <PtsChip pts={pts} />
+        </div>
+
+        {/* Block 4: Model */}
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-zinc-400 font-medium mb-0.5">Model</p>
+          {isDecimal ? (
+            <p className="text-[10px] text-zinc-500 leading-snug">
+              Model value: {locked.home_goals.toFixed(1)}–{locked.away_goals.toFixed(1)}
+            </p>
+          ) : locked.pool_rec_home !== undefined && locked.pool_rec_away !== undefined &&
+              (locked.pool_rec_home !== rH || locked.pool_rec_away !== rA) ? (
+            <p className="text-[10px] text-zinc-400">Pool rec: {locked.pool_rec_home}–{locked.pool_rec_away}</p>
+          ) : (
+            <p className="text-[10px] text-zinc-300">—</p>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -330,16 +377,14 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
               <FinalRow
                 fix={f}
                 actualH={r.home_goals} actualA={r.away_goals}
-                lockedH={locked?.home_goals} lockedA={locked?.away_goals}
-                source={locked?.pick_source}
+                locked={locked ?? undefined}
               />
             )
           } else if (isLocked) {
             rowContent = (
               <LockedRow
                 fix={f}
-                lockedH={locked.home_goals} lockedA={locked.away_goals}
-                source={locked.pick_source}
+                locked={locked}
                 poolH={poolRec?.recommended_home} poolA={poolRec?.recommended_away}
               />
             )
