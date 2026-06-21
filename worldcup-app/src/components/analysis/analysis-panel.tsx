@@ -10,6 +10,7 @@ import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
 import { ModelHealth } from './model-health'
 import { DisagreementAnalysis } from './disagreement-analysis'
 import { UpcomingAssistant } from './upcoming-assistant'
+import { DecisionEngine } from './decision-engine'
 
 const MODELS = ['A', 'B', 'C'] as const
 
@@ -93,6 +94,8 @@ export function AnalysisPanel() {
   return (
     <div className="space-y-4">
       <SyncErrorBanner />
+
+      <DecisionEngine />
 
       <ModelHealth />
       <DisagreementAnalysis />
