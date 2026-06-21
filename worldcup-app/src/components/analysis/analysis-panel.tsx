@@ -344,8 +344,8 @@ export function AnalysisPanel() {
         >
           <div className="flex items-center gap-2">
             <Brain className="h-3.5 w-3.5 text-indigo-400" />
-            <span className="text-sm font-semibold text-zinc-700">Model Debugging</span>
-            <span className="text-xs text-zinc-400">— Model A/B/C diagnostics, leaderboard, raw match data</span>
+            <span className="text-sm font-semibold text-zinc-700">Engine Diagnostics</span>
+            <span className="text-xs text-zinc-400">— Internal model breakdown, leaderboard, raw match data</span>
           </div>
           {showDebug ? <ChevronUp className="h-4 w-4 text-zinc-400" /> : <ChevronDown className="h-4 w-4 text-zinc-400" />}
         </button>

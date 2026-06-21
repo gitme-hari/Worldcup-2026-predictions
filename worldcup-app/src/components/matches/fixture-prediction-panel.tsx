@@ -541,14 +541,14 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
         </div>
       )}
 
-      {/* ▼ Model Breakdown (advanced) */}
+      {/* ▼ Engine internals (advanced) */}
       <div className="border-t border-zinc-100 pt-3">
         <button
           onClick={() => setShowBreakdown(v => !v)}
           className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-600 transition-colors"
         >
           {showBreakdown ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          Model Breakdown
+          Engine internals
         </button>
         {showBreakdown && (
           <div className="mt-2 space-y-1.5">

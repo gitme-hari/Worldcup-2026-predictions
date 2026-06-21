@@ -1,6 +1,6 @@
 'use client'
 import { Nav } from './nav'
-import { ActiveModelBadge } from '@/components/dashboard/active-model-badge'
+import { SyncStatusBadge } from '@/components/dashboard/sync-status-badge'
 
 export function Header() {
   return (
@@ -14,7 +14,7 @@ export function Header() {
           <div className="flex-1 overflow-hidden">
             <Nav />
           </div>
-          <ActiveModelBadge />
+          <SyncStatusBadge />
         </div>
       </div>
     </header>
