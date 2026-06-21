@@ -1,5 +1,6 @@
 import { ModelSettings } from '@/components/settings/model-settings'
 import { SyncStatus } from '@/components/settings/sync-status'
+import { BackfillTool } from '@/components/settings/backfill-tool'
 
 export default function SettingsPage() {
   return (
@@ -8,6 +9,8 @@ export default function SettingsPage() {
       <ModelSettings />
       <h2 className="text-base font-semibold text-zinc-900 pt-2">Sync</h2>
       <SyncStatus />
+      <h2 className="text-base font-semibold text-zinc-900 pt-2">Recovery</h2>
+      <BackfillTool />
     </div>
   )
 }

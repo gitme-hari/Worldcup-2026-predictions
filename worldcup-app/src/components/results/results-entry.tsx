@@ -353,10 +353,9 @@ function ResultRow({
               </div>
               {locked?.pick_source && locked.pick_source !== 'raw' && (
                 <div className="text-xs text-blue-500 font-medium">
-                  {locked.pick_source === 'calibrated'
-                    ? '↑ calibrated pick'
-                    : locked.pick_source === 'pool_recommendation'
-                    ? '↑ pool pick'
+                  {locked.pick_source === 'calibrated' ? '↑ calibrated pick'
+                    : locked.pick_source === 'pool_recommendation' ? '↑ pool pick'
+                    : locked.pick_source === 'backfilled' ? '↑ backfilled'
                     : '↑ custom pick'}
                 </div>
               )}
