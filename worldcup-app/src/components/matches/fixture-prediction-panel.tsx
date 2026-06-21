@@ -2,15 +2,19 @@
 import { useState } from 'react'
 import {
   getLockedPrediction, saveLockPrediction, getPoolRecommendation, getPredictions,
-  saveResult,
+  saveResult, getSquadAdjustments,
 } from '@/lib/store'
 import type { LockedPrediction } from '@/lib/store'
 import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
 import { buildRecommendation } from '@/lib/recommendation-engine'
 import type { Recommendation } from '@/lib/recommendation-engine'
-import { CheckCircle, ChevronDown, ChevronUp, Lock, Edit3, Flag, Sparkles } from 'lucide-react'
+import {
+  applySquadAdjustments, collectConfidenceShifts, shiftConfidence,
+} from '@/lib/squad-adjustments'
+import { CheckCircle, ChevronDown, ChevronUp, Lock, Edit3, Flag, Sparkles, AlertTriangle } from 'lucide-react'
 import { ScoreStepper } from '@/components/ui/score-stepper'
 import { MODEL_TEXT_COLORS } from '@/lib/utils'
+import { SquadAdjustmentEditor } from './squad-adjustment-editor'
 
 interface Props {
   fixture: SeedFixture
@@ -68,9 +72,54 @@ function ConfidenceBadge({ confidence }: { confidence: Recommendation['confidenc
   )
 }
 
+// ── Squad adjustment rationale banner ────────────────────────────────────────
+
+function AdjustmentBanner({
+  rationale,
+  originalConfidence,
+  adjustedConfidence,
+}: {
+  rationale: string[]
+  originalConfidence: Recommendation['confidence']
+  adjustedConfidence: Recommendation['confidence']
+}) {
+  if (rationale.length === 0) return null
+  const confidenceChanged = originalConfidence !== adjustedConfidence
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+        <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">
+          Prediction adjusted
+        </span>
+      </div>
+      <ul className="space-y-0.5">
+        {rationale.map((r, i) => (
+          <li key={i} className="flex gap-1.5 text-[10px] text-amber-800">
+            <span className="text-amber-300 shrink-0">·</span>{r}
+          </li>
+        ))}
+      </ul>
+      {confidenceChanged && (
+        <p className="text-[10px] text-amber-700">
+          Confidence: <span className="font-semibold">{originalConfidence}</span>
+          {' → '}
+          <span className="font-semibold">{adjustedConfidence}</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ── Engine recommendation box ─────────────────────────────────────────────────
 
-function RecommendationBox({ rec }: { rec: Recommendation }) {
+function RecommendationBox({
+  rec,
+  adjustedConfidence,
+}: {
+  rec: Recommendation
+  adjustedConfidence: Recommendation['confidence']
+}) {
   return (
     <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -78,7 +127,7 @@ function RecommendationBox({ rec }: { rec: Recommendation }) {
           <Sparkles className="h-3.5 w-3.5 text-zinc-500" />
           <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide">WC26 Recommendation</p>
         </div>
-        <ConfidenceBadge confidence={rec.confidence} />
+        <ConfidenceBadge confidence={adjustedConfidence} />
       </div>
       <p className="text-3xl font-black text-zinc-900 tabular-nums leading-none">
         {rec.scoreline.home}–{rec.scoreline.away}
@@ -143,13 +192,26 @@ function ResultEntryForm({ homeCode, awayCode, onSave, onCancel }: {
 export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: Props) {
   const poolRec    = getPoolRecommendation(fixture.id)
   const existingLP = getLockedPrediction(fixture.id)
-  const allPreds   = getPredictions().filter(p => p.fixture_id === fixture.id)
+  const rawPreds   = getPredictions().filter(p => p.fixture_id === fixture.id)
+
+  // Squad adjustments — re-loaded on change via `adjTick` state
+  const [adjTick, setAdjTick] = useState(0)
+  const squadAdjs = getSquadAdjustments(fixture.id)
+
+  // Apply adjustments to raw predictions before building recommendation
+  const { adjustedPreds, rationale: adjRationale } = applySquadAdjustments(rawPreds, squadAdjs)
+  const allPreds = adjTick >= 0 ? adjustedPreds : rawPreds // adjTick keeps dep happy
 
   const predsByModel = Object.fromEntries(
-    MODELS.map(m => [m, allPreds.find(p => p.model === m)])
+    MODELS.map(m => [m, rawPreds.find(p => p.model === m)])
   )
 
   const rec = buildRecommendation(allPreds)
+
+  // Confidence after squad adjustment shifts
+  const baseConfidence = rec?.confidence ?? 'Medium'
+  const confidenceShifts = collectConfidenceShifts(squadAdjs)
+  const adjustedConfidence = shiftConfidence(baseConfidence, confidenceShifts)
 
   const [locked, setLocked]             = useState<LockedPrediction | undefined>(existingLP)
   const [mode, setMode]                 = useState<Mode>('idle')
@@ -169,7 +231,7 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
 
   function usePoolRec() {
     if (!poolRec) return
-    const refPred = allPreds.find(p => p.model === poolRec.recommended_model) ?? allPreds[0]
+    const refPred = rawPreds.find(p => p.model === poolRec.recommended_model) ?? rawPreds[0]
     lockPick({
       fixture_id:      fixture.id,
       model:           poolRec.recommended_model,
@@ -225,7 +287,7 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
 
   function lockCustom() {
     if (!reason.trim()) { setReasonError(true); return }
-    const refPred = allPreds[0]
+    const refPred = rawPreds[0]
     lockPick({
       fixture_id:      fixture.id,
       model:           refPred?.model ?? 'A',
@@ -296,6 +358,15 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
             onCancel={() => setEnteringResult(false)}
           />
         )}
+
+        {/* Squad notes always visible even when locked */}
+        <SquadAdjustmentEditor
+          fixtureId={fixture.id}
+          home={home}
+          away={away}
+          adjustments={squadAdjs}
+          onChange={() => setAdjTick(t => t + 1)}
+        />
       </div>
     )
   }
@@ -306,13 +377,21 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
 
       <p className="text-[10px] text-zinc-400">{berlinDateLabel(fixture.kickoff_utc)}</p>
 
-      {/* Engine recommendation */}
-      {rec && <RecommendationBox rec={rec} />}
+      {/* Squad adjustment rationale — shown above recommendation if active */}
+      {adjRationale.length > 0 && rec && (
+        <AdjustmentBanner
+          rationale={adjRationale}
+          originalConfidence={baseConfidence}
+          adjustedConfidence={adjustedConfidence}
+        />
+      )}
+
+      {/* Engine recommendation (uses adjusted xG) */}
+      {rec && <RecommendationBox rec={rec} adjustedConfidence={adjustedConfidence} />}
 
       {/* Action buttons: idle mode */}
       {mode === 'idle' && (
         <div className="flex flex-col gap-2">
-          {/* Pool rec (pool-scoring optimised) takes precedence when available */}
           {poolRec && (
             <div>
               <p className="text-[9px] uppercase tracking-widest text-blue-500 mb-1 px-0.5">
@@ -331,7 +410,6 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
             </div>
           )}
 
-          {/* Engine recommendation */}
           {rec && (
             <button
               onClick={useEngineRec}
@@ -446,6 +524,15 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
           </div>
         )}
       </div>
+
+      {/* Squad Notes */}
+      <SquadAdjustmentEditor
+        fixtureId={fixture.id}
+        home={home}
+        away={away}
+        adjustments={squadAdjs}
+        onChange={() => setAdjTick(t => t + 1)}
+      />
     </div>
   )
 }
