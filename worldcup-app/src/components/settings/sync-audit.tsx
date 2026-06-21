@@ -293,11 +293,47 @@ export function SyncAudit() {
   const [result, setResult]       = useState<AuditResult | null>(null)
   const [resyncing, setResyncing] = useState(false)
   const [resyncResult, setResyncResult] = useState<ResyncResult | null>(null)
+  const [resyncingResults, setResyncingResults] = useState(false)
+  const [resyncResultsResult, setResyncResultsResult] = useState<ResyncResult | null>(null)
+
+  async function forceResyncResults(gaps: ResultGap[]) {
+    setResyncingResults(true)
+    setResyncResultsResult(null)
+    const allResults = getResults()
+    let succeeded = 0
+    const errors: ResyncResult['errors'] = []
+
+    for (const gap of gaps) {
+      const local = allResults.find(r => r.fixture_id === gap.fixture_id)
+      if (!local) {
+        errors.push({ fixtureId: gap.fixture_id, error: 'Not found in localStorage' })
+        continue
+      }
+      try {
+        const { error } = await supabase
+          .from('actual_results')
+          .upsert({ fixture_id: gap.fixture_id, home_goals: local.home_goals, away_goals: local.away_goals }, { onConflict: 'fixture_id' })
+        if (error) {
+          errors.push({ fixtureId: gap.fixture_id, error: error.message })
+        } else {
+          succeeded++
+        }
+      } catch (e) {
+        errors.push({ fixtureId: gap.fixture_id, error: e instanceof Error ? e.message : 'Unknown' })
+      }
+    }
+
+    setResyncResultsResult({ attempted: gaps.length, succeeded, failed: errors.length, errors })
+    setResyncingResults(false)
+    const r = await runAudit()
+    setResult(r)
+  }
 
   async function run() {
     setStatus('running')
     setResult(null)
     setResyncResult(null)
+    setResyncResultsResult(null)
     const r = await runAudit()
     setResult(r)
     setStatus('done')
@@ -426,6 +462,31 @@ export function SyncAudit() {
                       Missing from cloud ({resultGaps.missingFromCloud.length})
                     </p>
                     <ResultGapTable gaps={resultGaps.missingFromCloud} missingFrom="cloud" />
+                    <button
+                      onClick={() => forceResyncResults(resultGaps.missingFromCloud)}
+                      disabled={resyncingResults}
+                      className="mt-2 flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${resyncingResults ? 'animate-spin' : ''}`} />
+                      {resyncingResults
+                        ? 'Syncing…'
+                        : `Force Re-sync ${resultGaps.missingFromCloud.length} Missing Result${resultGaps.missingFromCloud.length !== 1 ? 's' : ''}`}
+                    </button>
+                    {resyncResultsResult && (
+                      <div className={`mt-2 rounded-md border px-3 py-2 ${resyncResultsResult.failed === 0 ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}>
+                        <p className={`font-semibold ${resyncResultsResult.failed === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                          Re-sync complete
+                        </p>
+                        <p className="text-zinc-600 mt-0.5">
+                          Attempted: {resyncResultsResult.attempted} · Succeeded: {resyncResultsResult.succeeded} · Failed: {resyncResultsResult.failed}
+                        </p>
+                        {resyncResultsResult.errors.map(e => (
+                          <p key={e.fixtureId} className="text-red-600 mt-0.5 font-mono">
+                            {e.fixtureId}: {e.error}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 {resultGaps.missingLocally.length > 0 && (
