@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import {
   getLockedPrediction, saveLockPrediction, getPoolRecommendation, getPredictions,
-  saveResult, getSquadAdjustments,
+  saveResult, getSquadAdjustments, getTeams, getFixtures, getResults,
 } from '@/lib/store'
 import type { LockedPrediction } from '@/lib/store'
 import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
@@ -11,6 +11,7 @@ import type { Recommendation } from '@/lib/recommendation-engine'
 import {
   applySquadAdjustments, collectConfidenceShifts, shiftConfidence,
 } from '@/lib/squad-adjustments'
+import { buildTeamAdjustments, teamSignal, hasNotableSignal } from '@/lib/learning-layer'
 import { CheckCircle, ChevronDown, ChevronUp, Lock, Edit3, Flag, Sparkles, AlertTriangle } from 'lucide-react'
 import { ScoreStepper } from '@/components/ui/score-stepper'
 import { MODEL_TEXT_COLORS } from '@/lib/utils'
@@ -111,6 +112,42 @@ function AdjustmentBanner({
   )
 }
 
+// ── Tournament learning context ───────────────────────────────────────────────
+
+interface LearningContext {
+  teamName: string
+  headline: string
+  arrow: '↑' | '↓' | '→'
+  colour: 'emerald' | 'red' | 'amber'
+}
+
+function TournamentContext({ signals }: { signals: LearningContext[] }) {
+  if (signals.length === 0) return null
+  return (
+    <div className="rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2 space-y-1">
+      <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">
+        Tournament context
+      </p>
+      {signals.map((s, i) => {
+        const arrowCls =
+          s.colour === 'emerald' ? 'text-emerald-600' : s.colour === 'red' ? 'text-red-500' : 'text-amber-500'
+        const textCls =
+          s.colour === 'emerald' ? 'text-emerald-700' : s.colour === 'red' ? 'text-red-600' : 'text-amber-600'
+        return (
+          <div key={i} className="flex items-center gap-1.5 text-xs">
+            <span className={`font-bold ${arrowCls}`}>{s.arrow}</span>
+            <span className="font-medium text-zinc-700">{s.teamName}</span>
+            <span className={textCls}>{s.headline.toLowerCase()}</span>
+          </div>
+        )
+      })}
+      <p className="text-[10px] text-zinc-400 pt-0.5">
+        Already factored into the recommendation above.
+      </p>
+    </div>
+  )
+}
+
 // ── Engine recommendation box ─────────────────────────────────────────────────
 
 function RecommendationBox({
@@ -207,6 +244,15 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
   )
 
   const rec = buildRecommendation(allPreds)
+
+  // Tournament learning signals for home/away teams
+  const allTeamAdjs = buildTeamAdjustments(getTeams(), getFixtures(), getResults(), getPredictions())
+  const homeAdj = allTeamAdjs.find(a => a.teamId === fixture.home_team_id)
+  const awayAdj = allTeamAdjs.find(a => a.teamId === fixture.away_team_id)
+  const learningSignals: LearningContext[] = [
+    ...(homeAdj && hasNotableSignal(homeAdj) ? [{ ...teamSignal(homeAdj), teamName: home?.name ?? homeAdj.teamName }] : []),
+    ...(awayAdj && hasNotableSignal(awayAdj) ? [{ ...teamSignal(awayAdj), teamName: away?.name ?? awayAdj.teamName }] : []),
+  ]
 
   // Confidence after squad adjustment shifts
   const baseConfidence = rec?.confidence ?? 'Medium'
@@ -388,6 +434,9 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
 
       {/* Engine recommendation (uses adjusted xG) */}
       {rec && <RecommendationBox rec={rec} adjustedConfidence={adjustedConfidence} />}
+
+      {/* Tournament learning context */}
+      <TournamentContext signals={learningSignals} />
 
       {/* Action buttons: idle mode */}
       {mode === 'idle' && (
