@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiasData, computeCalibration } from '@/lib/store'
+import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiasData, computeCalibration, getConfig } from '@/lib/store'
 import { getOutcome } from '@/lib/models'
 import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -226,26 +226,31 @@ export function AnalysisPanel() {
         </div>
       </Card>
 
-      {/* You vs The Model — uses original seed prediction as model baseline, not locked value */}
+      {/* You vs The Model — uses original seed prediction as model baseline, not locked value.
+          Falls back to active model when no LockedPrediction exists (e.g. sync gap). */}
       {humanPredsList.length > 0 && (() => {
+        const activeModel = (getConfig().active_model ?? 'A') as 'A' | 'B' | 'C'
         // Build rows: completed overrides only (have a result)
         const completedRows = humanPredsList.flatMap(hp => {
           const result = results.find(r => r.fixture_id === hp.fixture_id)
           if (!result) return []
-          const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
-          if (!locked) return []
-          const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === (locked.model as 'A' | 'B' | 'C'))
-          if (!origPred) return []
           const fixture = fixtures.find(f => f.id === hp.fixture_id)
           if (!fixture) return []
           const home = teamMap[fixture.home_team_id]
           const away = teamMap[fixture.away_team_id]
           if (!home || !away) return []
+          // Use locked model if available, fall back to active model (covers sync-gap cases)
+          const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+          const modelKey = locked ? (locked.model as 'A' | 'B' | 'C') : activeModel
+          const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === modelKey)
+          if (!origPred) return []
           const actualOutcome = getOutcome(result.home_goals, result.away_goals)
           return [{
             fixtureId: fixture.id,
             homeTeam: home, awayTeam: away,
             origHome: origPred.home_goals, origAway: origPred.away_goals,
+            modelKey,
+            noLock: !locked,
             humanHome: hp.home_goals, humanAway: hp.away_goals,
             comment: hp.comment,
             actualHome: result.home_goals, actualAway: result.away_goals,
@@ -303,9 +308,22 @@ export function AnalysisPanel() {
                   </div>
                 </div>
               )}
-              {pending > 0 && (
-                <p className="text-xs text-zinc-400 mb-3">{pending} override{pending > 1 ? 's' : ''} pending result.</p>
-              )}
+              {(() => {
+                const noLockCount = completedRows.filter(r => r.noLock).length
+                const pendingCount = humanPredsList.length - completedRows.length
+                return (
+                  <>
+                    {noLockCount > 0 && (
+                      <p className="text-xs text-amber-600 mb-2">
+                        {noLockCount} match{noLockCount > 1 ? 'es' : ''} had no lock saved — used Model {activeModel} (active) as baseline.
+                      </p>
+                    )}
+                    {pendingCount > 0 && (
+                      <p className="text-xs text-zinc-400 mb-3">{pendingCount} override{pendingCount > 1 ? 's' : ''} pending result.</p>
+                    )}
+                  </>
+                )
+              })()}
               {completedRows.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -326,7 +344,10 @@ export function AnalysisPanel() {
                             <td className="px-3 py-2.5 whitespace-nowrap">
                               {row.homeTeam.flag_url} {row.homeTeam.code} <span className="text-zinc-300">v</span> {row.awayTeam.code} {row.awayTeam.flag_url}
                             </td>
-                            <td className="px-3 py-2.5 text-center font-mono text-zinc-500">{row.origHome.toFixed(1)}–{row.origAway.toFixed(1)}</td>
+                            <td className="px-3 py-2.5 text-center font-mono text-zinc-500">
+                              {row.origHome.toFixed(1)}–{row.origAway.toFixed(1)}
+                              {row.noLock && <span className="ml-1 text-amber-400 text-[10px]">~{row.modelKey}</span>}
+                            </td>
                             <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-600">{row.humanHome}–{row.humanAway}</td>
                             <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">{row.actualHome}–{row.actualAway}</td>
                             <td className="px-3 py-2.5 text-center">
