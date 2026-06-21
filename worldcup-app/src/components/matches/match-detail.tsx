@@ -11,6 +11,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, CheckCircle, Lock, Edit3 } from 'lucide-react'
 import Link from 'next/link'
+import { ScoreStepper } from '@/components/ui/score-stepper'
 
 type ModelKey = 'A' | 'B' | 'C' | 'hybrid'
 type ActionMode = 'idle' | 'customise'
@@ -374,26 +375,18 @@ export function MatchDetail({ fixtureId }: { fixtureId: string }) {
             <CardTitle className="text-sm">Custom Pick</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <label className="block text-xs text-zinc-500 mb-1">{home?.code ?? 'Home'} goals</label>
-                <input
-                  type="number" min={0} max={20}
-                  value={customH}
-                  onChange={e => setCustomH(Math.max(0, parseInt(e.target.value) || 0))}
-                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-center text-xl font-bold text-zinc-900 focus:border-blue-400 focus:outline-none"
-                />
-              </div>
-              <span className="text-zinc-300 text-xl pb-2">–</span>
-              <div className="flex-1">
-                <label className="block text-xs text-zinc-500 mb-1">{away?.code ?? 'Away'} goals</label>
-                <input
-                  type="number" min={0} max={20}
-                  value={customA}
-                  onChange={e => setCustomA(Math.max(0, parseInt(e.target.value) || 0))}
-                  className="w-full rounded-md border border-zinc-300 px-3 py-2 text-center text-xl font-bold text-zinc-900 focus:border-blue-400 focus:outline-none"
-                />
-              </div>
+            <div className="flex items-start gap-3">
+              <ScoreStepper
+                label={`${home?.code ?? 'Home'} goals`}
+                value={customH}
+                onChange={setCustomH}
+              />
+              <div className="text-zinc-300 text-xl pt-7 shrink-0">–</div>
+              <ScoreStepper
+                label={`${away?.code ?? 'Away'} goals`}
+                value={customA}
+                onChange={setCustomA}
+              />
             </div>
 
             <div>
