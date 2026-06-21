@@ -359,18 +359,16 @@ export function deleteHumanPrediction(fixtureId: string) {
   save(KEYS.humanPreds, getHumanPredictions().filter(p => p.fixture_id !== fixtureId))
 }
 
-// Per-team summary for Model D display
 export interface HumanBiasSummary {
   teamId: string
   samples: number
   avg: number
-  // true only when samples >= 3 and |avg| > 0.01 — the minimum for reliable bias
-  qualified: boolean
+  qualified: boolean  // samples >= 3 && |avg| > 0.01
 }
 
-// Returns per-team bias summaries derived from human overrides vs original model predictions.
-// Bug fix: previously compared human pick to locked pick, which is always 0 for custom picks
-// because the lock stores the same custom value. Now compares to the seed model prediction.
+// Compares human overrides against the ORIGINAL seed model prediction (not the locked value).
+// When pick_source='custom', locked.home_goals === hp.home_goals so that delta is always 0.
+// The correct baseline is the seed prediction for locked.model.
 export function computeHumanBiasData(): HumanBiasSummary[] {
   const humanPreds = getHumanPredictions()
   const lockedPreds = getLockedPredictions()
@@ -385,11 +383,7 @@ export function computeHumanBiasData(): HumanBiasSummary[] {
     const fixture = fixtures.find(f => f.id === hp.fixture_id)
     if (!fixture) continue
 
-    // Compare human pick to the ORIGINAL model prediction, not the locked value.
-    // When pick_source='custom', locked.home_goals === hp.home_goals (same value),
-    // so that comparison always produces delta=0. The seed prediction is the correct baseline.
-    const modelKey = locked.model as 'A' | 'B' | 'C'
-    const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === modelKey)
+    const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === (locked.model as 'A' | 'B' | 'C'))
     if (!origPred) continue
 
     const homeDelta = hp.home_goals - origPred.home_goals
@@ -412,7 +406,6 @@ export function computeHumanBiasData(): HumanBiasSummary[] {
   })
 }
 
-// Kept for backward compatibility — returns only qualified teams as a simple map.
 export function computeHumanBiases(): Record<string, number> {
   const result: Record<string, number> = {}
   for (const entry of computeHumanBiasData()) {
