@@ -17,12 +17,30 @@ import { AlertCircle, Calendar, RefreshCw, Trophy, Zap } from 'lucide-react'
 const BERLIN_TZ = 'Europe/Berlin'
 
 function berlinLabel(utc: string) {
-  const d = new Date(utc)
-  const todayBerlin = new Date().toLocaleDateString('en-GB', { timeZone: BERLIN_TZ })
-  const dayBerlin   = d.toLocaleDateString('en-GB', { timeZone: BERLIN_TZ })
-  const timeBerlin  = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: BERLIN_TZ })
-  const label = todayBerlin === dayBerlin ? 'Today' : 'Tomorrow'
-  return `${label} · ${timeBerlin} CEST`
+  const d    = new Date(utc)
+  const now  = new Date()
+
+  // Compare calendar dates in Berlin time
+  const fmt = (date: Date) => date.toLocaleDateString('en-CA', { timeZone: BERLIN_TZ }) // YYYY-MM-DD
+  const todayStr    = fmt(now)
+  const tomorrowStr = fmt(new Date(now.getTime() + 24 * 3600_000))
+  const matchStr    = fmt(d)
+
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: BERLIN_TZ })
+
+  let dayLabel: string
+  if (matchStr === todayStr) {
+    dayLabel = 'Today'
+  } else if (matchStr === tomorrowStr) {
+    dayLabel = 'Tomorrow'
+  } else {
+    // "Mon 23 Jun"
+    const weekday = d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: BERLIN_TZ })
+    const date    = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: BERLIN_TZ })
+    dayLabel = `${weekday} ${date}`
+  }
+
+  return `${dayLabel} · ${time} CEST`
 }
 
 function poissonProb(lambda: number, k: number): number {
