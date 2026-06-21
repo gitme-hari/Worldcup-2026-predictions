@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { getFixtures, getTeams, getPredictions, getResults, getResult, getOverride, getConfig } from '@/lib/store'
+import { getFixtures, getTeams, getPredictions, getResults, getResult, getOverride, getConfig, getPoolRecommendation } from '@/lib/store'
 import { computeHybrid } from '@/lib/models'
 import { formatDate, formatTime, pct, goals, MODEL_LABELS, STAGE_LABELS } from '@/lib/utils'
 import type { SeedFixture } from '@/lib/seed-data'
@@ -36,15 +36,25 @@ const MATCHDAYS = [
   { value: '3', label: 'Matchday 3' },
 ]
 
-export function MatchList() {
+interface MatchListProps {
+  focusFixtureId?: string
+}
+
+export function MatchList({ focusFixtureId }: MatchListProps = {}) {
   const [mounted, setMounted] = useState(false)
   const [group, setGroup] = useState('All')
   const [stage, setStage] = useState('all')
   const [modelFilter, setModelFilter] = useState('active')
   const [matchday, setMatchday] = useState('all')
   const [search, setSearch] = useState('')
+  const focusRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => setMounted(true), [])
+
+  useEffect(() => {
+    if (!focusFixtureId || !focusRef.current) return
+    focusRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [focusFixtureId, mounted])
 
   if (!mounted) return <div className="h-96 animate-pulse rounded-lg bg-zinc-100" />
 
@@ -126,10 +136,18 @@ export function MatchList() {
           const pred = getPred(f.id, displayModel as string)
           const result = getResult(f.id)
           const override = getOverride(f.id)
+          const isFocused = f.id === focusFixtureId
+          const poolRec = isFocused ? getPoolRecommendation(f.id) : undefined
 
           return (
-            <Link key={f.id} href={`/matches/${f.id}`}>
-              <Card className="hover:border-zinc-300 cursor-pointer transition-colors">
+            <div key={f.id} ref={isFocused ? focusRef : undefined}>
+              {isFocused && poolRec && (
+                <div className="mb-1 rounded-t-lg border border-b-0 border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  <span className="font-semibold">Recommended pick:</span> {poolRec.recommended_home}–{poolRec.recommended_away} (Model {poolRec.recommended_model}) · {poolRec.recommendation_reason}
+                </div>
+              )}
+            <Link href={`/matches/${f.id}`}>
+              <Card className={`hover:border-zinc-300 cursor-pointer transition-colors ${isFocused ? 'border-blue-400 ring-2 ring-blue-200' : ''}`}>
                 <div className="px-3 py-2.5">
                   {/* Header row */}
                   <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -186,6 +204,7 @@ export function MatchList() {
                 </div>
               </Card>
             </Link>
+            </div>
           )
         })}
       </div>
