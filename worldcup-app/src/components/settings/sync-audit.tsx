@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { getResults, getLockedPredictions, getHumanPredictions, getFixtures } from '@/lib/store'
 import { supabase } from '@/lib/supabase'
-import { syncLockedPred, syncResult } from '@/lib/sync'
+import { syncLockedPred } from '@/lib/sync'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Search, RefreshCw } from 'lucide-react'
 import { SEED_TEAMS } from '@/lib/seed-data'
@@ -310,8 +310,14 @@ export function SyncAudit() {
         continue
       }
       try {
-        await syncResult(gap.fixture_id, local.home_goals, local.away_goals)
-        succeeded++
+        const { error } = await supabase
+          .from('actual_results')
+          .upsert({ fixture_id: gap.fixture_id, home_goals: local.home_goals, away_goals: local.away_goals }, { onConflict: 'fixture_id' })
+        if (error) {
+          errors.push({ fixtureId: gap.fixture_id, error: error.message })
+        } else {
+          succeeded++
+        }
       } catch (e) {
         errors.push({ fixtureId: gap.fixture_id, error: e instanceof Error ? e.message : 'Unknown' })
       }
