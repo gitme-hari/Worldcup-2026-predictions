@@ -196,13 +196,16 @@ function computeConfidence(metrics: ComputedMetrics[]) {
     : n >= 40 && (accGap > 0.03 || brierGap > 0.005) ? 'Medium'
     : 'Low'
 
-  const explanation = confidence === 'High'
-    ? `Model ${best.model} has a clear, sustained edge — use it consistently.`
-    : confidence === 'Medium'
-    ? `Model ${best.model} is pulling ahead but the lead is not yet decisive. Lean toward it.`
-    : `Model ${best.model} leads on accuracy and Brier, but Model ${second.model} is very close. Current evidence is not yet decisive.`
+  // Translate accuracy gap into an integer "correct predictions" difference
+  const correctDiff = Math.round(accGap * n)   // e.g. 0.03 × 36 ≈ 1
 
-  return { best, second, confidence, accGap, brierGap, explanation }
+  const recommendation = confidence === 'High'
+    ? `Model ${best.model} has a consistent, meaningful edge. Use it.`
+    : confidence === 'Medium'
+    ? `Continue using Model ${best.model}. The lead is real but not yet decisive.`
+    : `Continue using Model ${best.model} for now, but treat this as a marginal preference — not a strong signal.`
+
+  return { best, second, confidence, accGap, brierGap, correctDiff, recommendation }
 }
 
 const REC_CONF_BADGE: Record<Confidence, string> = {
@@ -232,7 +235,7 @@ function ModelRecommendationCard() {
     )
   }
 
-  const { best, second, confidence, accGap, brierGap, explanation } = result
+  const { best, second, confidence, accGap, brierGap, correctDiff, recommendation } = result
   const stab = computeStability(best.model)
   return (
     <Card className="border-2 border-zinc-200">
@@ -242,9 +245,10 @@ function ModelRecommendationCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 pt-0">
+        {/* Verdict row */}
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-xs text-zinc-400 mb-0.5">Recommended</p>
+            <p className="text-xs text-zinc-400 mb-0.5">Current Leader</p>
             <p className="text-2xl font-bold text-zinc-900">Model {best.model}</p>
           </div>
           <div className="text-right">
@@ -255,6 +259,8 @@ function ModelRecommendationCard() {
             </span>
           </div>
         </div>
+
+        {/* Raw metrics row */}
         <div className="grid grid-cols-3 gap-2 text-xs">
           {[
             { label: 'Accuracy', val: `${(best.accuracy * 100).toFixed(0)}%` },
@@ -267,8 +273,32 @@ function ModelRecommendationCard() {
             </div>
           ))}
         </div>
+
         <div className="border-t border-zinc-100" />
-        <p className="text-xs text-zinc-500 leading-relaxed">{explanation}</p>
+
+        {/* Edge in plain English */}
+        <div className="rounded-md bg-zinc-50 px-3 py-2.5 text-xs space-y-1">
+          <p className="font-medium text-zinc-500">Edge over Model {second.model}</p>
+          <p className="text-zinc-600">
+            +{correctDiff === 0 ? '<1' : correctDiff} correct prediction{correctDiff !== 1 ? 's' : ''} over {best.total} matches
+            {' '}
+            <span className="text-zinc-400">
+              ({accGap < 0.03 ? 'within noise' : accGap < 0.05 ? 'moderate gap' : 'meaningful gap'})
+            </span>
+          </p>
+          <p className="text-zinc-600">
+            {brierGap < 0.001 ? '<0.001' : brierGap.toFixed(4)} Brier improvement
+            {' '}
+            <span className="text-zinc-400">
+              ({brierGap < 0.002 ? 'negligible' : brierGap < 0.010 ? 'small' : 'clear'})
+            </span>
+          </p>
+        </div>
+
+        {/* Recommendation sentence */}
+        <p className="text-xs text-zinc-500 leading-relaxed">{recommendation}</p>
+
+        {/* Stability */}
         {stab && (
           <div className="flex items-start gap-2 rounded-md bg-zinc-50 px-2.5 py-2">
             <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
@@ -281,27 +311,11 @@ function ModelRecommendationCard() {
               {stab.stability === 'High'
                 ? `Model ${best.model} led ${stab.leaderStreak} of the last ${stab.window} completed fixtures.`
                 : stab.stability === 'Medium'
-                ? `Leadership changed ${stab.changes} times in the last ${stab.window} fixtures. Model ${best.model} currently leads.`
+                ? `Leadership changed ${stab.changes} times in the last ${stab.window} fixtures.`
                 : `Models have exchanged leadership ${stab.changes} times in the last ${stab.window} fixtures — no consistent leader.`}
             </p>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-md bg-zinc-50 px-2.5 py-1.5">
-            <p className="text-zinc-400">vs Model {second.model} — accuracy</p>
-            <p className="font-semibold text-zinc-700">
-              +{(accGap * 100).toFixed(1)}pp{' '}
-              <span className="font-normal text-zinc-400">({accGap < 0.03 ? 'within noise' : accGap < 0.05 ? 'moderate' : 'meaningful'})</span>
-            </p>
-          </div>
-          <div className="rounded-md bg-zinc-50 px-2.5 py-1.5">
-            <p className="text-zinc-400">vs Model {second.model} — Brier</p>
-            <p className="font-semibold text-zinc-700">
-              {brierGap < 0.001 ? '<0.001' : brierGap.toFixed(4)} better{' '}
-              <span className="font-normal text-zinc-400">({brierGap < 0.002 ? 'negligible' : brierGap < 0.010 ? 'small' : 'clear'})</span>
-            </p>
-          </div>
-        </div>
       </CardContent>
     </Card>
   )
