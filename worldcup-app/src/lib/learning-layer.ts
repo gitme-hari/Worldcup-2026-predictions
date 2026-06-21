@@ -143,9 +143,51 @@ export function buildTeamAdjustments(
   )
 }
 
-// Format factor as "+20%" / "-10%" / "baseline"
+// Format factor as "+20%" / "-10%" / "baseline" (for debug views)
 export function formatFactor(factor: number): string {
   const pct = Math.round((factor - 1) * 100)
   if (pct === 0) return 'baseline'
   return pct > 0 ? `+${pct}%` : `${pct}%`
+}
+
+// ── Plain-language signals (for user-facing UI) ───────────────────────────────
+
+export type SignalDirection = 'above' | 'below' | 'on-track'
+
+export interface TeamSignal {
+  attack: SignalDirection
+  defence: SignalDirection
+  // Primary headline for this team (the most notable signal)
+  headline: string
+  // Arrow glyph: ↑ ↓ →
+  arrow: '↑' | '↓' | '→'
+  // Tailwind colour token for the signal
+  colour: 'emerald' | 'red' | 'amber'
+}
+
+const SIGNAL_THRESHOLD = 0.08 // ±8% before we call it notable
+
+export function teamSignal(adj: TeamAdjustment): TeamSignal {
+  const atkPct = adj.attackFactor - 1
+  const defPct = adj.defenceFactor - 1
+
+  const attack: SignalDirection =
+    atkPct >= SIGNAL_THRESHOLD ? 'above' : atkPct <= -SIGNAL_THRESHOLD ? 'below' : 'on-track'
+  const defence: SignalDirection =
+    defPct >= SIGNAL_THRESHOLD ? 'above' : defPct <= -SIGNAL_THRESHOLD ? 'below' : 'on-track'
+
+  // Primary signal: attack takes precedence if notable, else defence
+  if (attack === 'above') return { attack, defence, headline: 'Scoring above expectation', arrow: '↑', colour: 'emerald' }
+  if (attack === 'below') return { attack, defence, headline: 'Scoring below expectation', arrow: '↓', colour: 'red' }
+  if (defence === 'below') return { attack, defence, headline: 'Conceding less than expected', arrow: '↑', colour: 'emerald' }
+  if (defence === 'above') return { attack, defence, headline: 'Conceding more than expected', arrow: '↓', colour: 'red' }
+  return { attack, defence, headline: 'Tracking as expected', arrow: '→', colour: 'amber' }
+}
+
+// Whether a team has any notable signal worth surfacing
+export function hasNotableSignal(adj: TeamAdjustment): boolean {
+  return (
+    Math.abs(adj.attackFactor - 1) >= SIGNAL_THRESHOLD ||
+    Math.abs(adj.defenceFactor - 1) >= SIGNAL_THRESHOLD
+  )
 }

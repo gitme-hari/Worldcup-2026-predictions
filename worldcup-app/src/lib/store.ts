@@ -16,6 +16,7 @@ const KEYS = {
   liveData: 'wc26_live_data',
   lockedPreds: 'wc26_locked_preds',
   humanPreds: 'wc26_human_preds',
+  squadAdjustments: 'wc26_squad_adjustments',
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -485,6 +486,29 @@ export function getPoolRecommendations(): PoolRecommendation[] {
 
 export function getPoolRecommendation(fixtureId: string): PoolRecommendation | undefined {
   return getPoolRecommendations().find(r => r.fixture_id === fixtureId)
+}
+
+// ── Squad Adjustments ─────────────────────────────────────────────────────────
+import type { SquadAdjustment } from './squad-adjustments'
+
+export function getSquadAdjustments(fixtureId?: string): SquadAdjustment[] {
+  const all = load<SquadAdjustment[]>(KEYS.squadAdjustments, [])
+  return fixtureId ? all.filter(a => a.fixture_id === fixtureId) : all
+}
+
+export function saveSquadAdjustment(adj: Omit<SquadAdjustment, 'id' | 'created_at'>) {
+  const all = getSquadAdjustments()
+  const full: SquadAdjustment = {
+    ...adj,
+    id: `sqadj-${adj.fixture_id}-${Date.now()}`,
+    created_at: new Date().toISOString(),
+  }
+  save(KEYS.squadAdjustments, [...all, full])
+  return full
+}
+
+export function deleteSquadAdjustment(id: string) {
+  save(KEYS.squadAdjustments, getSquadAdjustments().filter(a => a.id !== id))
 }
 
 // Write-once: if a recommendation already exists for this fixture, do not overwrite it.
