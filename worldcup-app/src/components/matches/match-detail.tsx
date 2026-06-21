@@ -2,11 +2,18 @@
 import { useState, useEffect } from 'react'
 import {
   getFixture, getTeam, getPredictions, getResult,
-  getLockedPrediction, getPoolRecommendation, saveLockPrediction, getConfig,
+  getLockedPrediction, getPoolRecommendation, saveLockPrediction,
 } from '@/lib/store'
 import type { LockedPrediction } from '@/lib/store'
-import { computeHybrid } from '@/lib/models'
-import { formatDate, formatTime, pct, MODEL_LABELS, MODEL_TEXT_COLORS } from '@/lib/utils'
+import { computeHybrid, engineScore } from '@/lib/models'
+import { formatDate, formatTime, pct } from '@/lib/utils'
+
+const ENGINE_LABELS: Record<string, string> = {
+  A: 'Poisson', B: 'ML', C: 'Live Intelligence', hybrid: 'Hybrid',
+}
+const ENGINE_TEXT_COLORS: Record<string, string> = {
+  A: 'text-blue-600', B: 'text-purple-600', C: 'text-green-600', hybrid: 'text-orange-600',
+}
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeft, CheckCircle, Lock, Edit3 } from 'lucide-react'
@@ -92,10 +99,9 @@ export function MatchDetail({ fixtureId }: { fixtureId: string }) {
   const [reasonError, setReasonError]     = useState(false)
 
   useEffect(() => {
-    const config = getConfig()
-    const active = config.active_model as ModelKey
-    setSelectedModel(active === 'hybrid' ? 'hybrid' : active)
-    setLockedPick(getLockedPrediction(fixtureId))
+    const existing = getLockedPrediction(fixtureId)
+    setSelectedModel((existing?.model as ModelKey) ?? 'A')
+    setLockedPick(existing)
     setMounted(true)
   }, [fixtureId])
 
@@ -109,11 +115,10 @@ export function MatchDetail({ fixtureId }: { fixtureId: string }) {
   const result  = getResult(fixtureId)
   const poolRec = getPoolRecommendation(fixtureId)
   const preds   = getPredictions()
-  const config  = getConfig()
 
   const getModelPred = (m: ModelKey) =>
     m === 'hybrid'
-      ? computeHybrid(preds as any, fixtureId, { a: config.weight_a, b: config.weight_b, c: config.weight_c })
+      ? computeHybrid(preds as any, fixtureId, { a: 33, b: 33, c: 34 })
       : preds.find(p => p.fixture_id === fixtureId && p.model === m) ?? null
 
   const selectedPred = getModelPred(selectedModel)
@@ -280,7 +285,7 @@ export function MatchDetail({ fixtureId }: { fixtureId: string }) {
                       : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
                   }`}
                 >
-                  {MODEL_LABELS[m] ?? 'Hybrid'}
+                  {ENGINE_LABELS[m] ?? m}
                 </button>
               ))}
             </div>
@@ -289,8 +294,8 @@ export function MatchDetail({ fixtureId }: { fixtureId: string }) {
             {selectedPred ? (
               <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className={`text-xs font-semibold ${MODEL_TEXT_COLORS[selectedModel] ?? 'text-zinc-600'}`}>
-                    {MODEL_LABELS[selectedModel] ?? 'Hybrid'} prediction
+                  <span className={`text-xs font-semibold ${ENGINE_TEXT_COLORS[selectedModel] ?? 'text-zinc-600'}`}>
+                    {ENGINE_LABELS[selectedModel] ?? selectedModel} prediction
                   </span>
                   <span className="text-xl font-bold text-zinc-900 tabular-nums">
                     {topScoreline(selectedPred.home_goals, selectedPred.away_goals).h}–{topScoreline(selectedPred.home_goals, selectedPred.away_goals).a}
@@ -317,8 +322,8 @@ export function MatchDetail({ fixtureId }: { fixtureId: string }) {
                   const sl = topScoreline(p.home_goals, p.away_goals)
                   return (
                     <div key={m} className="flex items-center gap-2 rounded-md bg-zinc-50 px-3 py-2 text-xs">
-                      <span className={`font-semibold w-14 ${MODEL_TEXT_COLORS[m] ?? 'text-zinc-600'}`}>
-                        {MODEL_LABELS[m] ?? 'Hybrid'}
+                      <span className={`font-semibold w-14 ${ENGINE_TEXT_COLORS[m] ?? 'text-zinc-600'}`}>
+                        {ENGINE_LABELS[m] ?? m}
                       </span>
                       <span className="font-mono font-bold text-zinc-800 tabular-nums">{sl.h}–{sl.a}</span>
                       <span className="text-zinc-400 flex-1">
@@ -352,7 +357,7 @@ export function MatchDetail({ fixtureId }: { fixtureId: string }) {
                 onClick={() => lock(sl.h, sl.a, 'raw')}
                 className="w-full flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-3 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors"
               >
-                <Lock className="h-4 w-4" /> Use {MODEL_LABELS[selectedModel] ?? 'Selected Model'} ({sl.h}–{sl.a})
+                <Lock className="h-4 w-4" /> Use {ENGINE_LABELS[selectedModel] ?? selectedModel} ({sl.h}–{sl.a})
               </button>
             )
           })()}

@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   getFixtures, getTeams, getResults,
-  getLockedPredictions, getConfig,
+  getLockedPredictions,
 } from '@/lib/store'
 import type { LockedPrediction } from '@/lib/store'
 import { formatDate } from '@/lib/utils'

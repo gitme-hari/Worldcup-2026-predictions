@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiasData, computeCalibration, getConfig } from '@/lib/store'
+import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiasData, computeCalibration } from '@/lib/store'
 import { getOutcome } from '@/lib/models'
 import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -129,7 +129,7 @@ export function AnalysisPanel() {
 
       {/* ── 1. Pool Performance ──────────────────────────────────────────────── */}
       {(() => {
-        const activeModel = (getConfig().active_model ?? 'A') as 'A' | 'B' | 'C'
+        const activeModel: 'A' | 'B' | 'C' = 'A'
         const pending = humanPredsList.filter(hp => !results.find(r => r.fixture_id === hp.fixture_id))
 
         type OverrideRow = {

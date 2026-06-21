@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import {
   getFixtures, getTeams, getResults, getLockedPredictions,
-  getLockedPrediction, saveLockPrediction, getConfig,
+  getLockedPrediction, saveLockPrediction,
 } from '@/lib/store'
 import type { LockedPrediction } from '@/lib/store'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -49,7 +49,6 @@ export function BackfillTool() {
   const resultMap   = Object.fromEntries(results.map(r => [r.fixture_id, r]))
   const lockedPreds = getLockedPredictions()
   const lockedMap   = Object.fromEntries(lockedPreds.map(p => [p.fixture_id, p]))
-  const config      = getConfig()
 
   // Completed matches without a locked pick (the gap we're filling)
   const missingRows: BackfillRow[] = results.flatMap(r => {
@@ -104,7 +103,7 @@ export function BackfillTool() {
 
     const pick: Omit<LockedPrediction, 'locked_at'> = {
       fixture_id:      row.fixtureId,
-      model:           config.active_model ?? 'A',
+      model:           'A',
       home_goals:      h,
       away_goals:      a,
       home_win_prob:   0,
