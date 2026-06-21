@@ -2,8 +2,16 @@
 import { useState } from 'react'
 import { getResults, getLockedPredictions, getHumanPredictions } from '@/lib/store'
 import { supabase } from '@/lib/supabase'
+import { syncLockedPred } from '@/lib/sync'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Search } from 'lucide-react'
+import { Search, RefreshCw } from 'lucide-react'
+
+interface ResyncResult {
+  attempted: number
+  succeeded: number
+  failed: number
+  errors: { fixtureId: string; error: string }[]
+}
 
 interface AuditResult {
   local: {
@@ -192,15 +200,60 @@ function GapList({ ids, emptyMsg }: { ids: string[]; emptyMsg: string }) {
 }
 
 export function SyncAudit() {
-  const [status, setStatus]   = useState<'idle' | 'running' | 'done'>('idle')
-  const [result, setResult]   = useState<AuditResult | null>(null)
+  const [status, setStatus]       = useState<'idle' | 'running' | 'done'>('idle')
+  const [result, setResult]       = useState<AuditResult | null>(null)
+  const [resyncing, setResyncing] = useState(false)
+  const [resyncResult, setResyncResult] = useState<ResyncResult | null>(null)
 
   async function run() {
     setStatus('running')
     setResult(null)
+    setResyncResult(null)
     const r = await runAudit()
     setResult(r)
     setStatus('done')
+  }
+
+  async function forceResync(missingIds: string[]) {
+    setResyncing(true)
+    setResyncResult(null)
+    const allLocked = getLockedPredictions()
+    const toSync    = allLocked.filter(p => missingIds.includes(p.fixture_id))
+    let succeeded = 0
+    const errors: ResyncResult['errors'] = []
+
+    for (const pred of toSync) {
+      try {
+        const { error } = await supabase
+          .from('locked_predictions')
+          .upsert({
+            fixture_id:      pred.fixture_id,
+            model:           pred.model,
+            home_goals:      pred.home_goals,
+            away_goals:      pred.away_goals,
+            home_win_prob:   pred.home_win_prob,
+            draw_prob:       pred.draw_prob,
+            away_win_prob:   pred.away_win_prob,
+            pick_source:     pred.pick_source ?? 'raw',
+            override_reason: pred.override_reason ?? null,
+            pool_rec_home:   pred.pool_rec_home ?? null,
+            pool_rec_away:   pred.pool_rec_away ?? null,
+          }, { onConflict: 'fixture_id' })
+        if (error) {
+          errors.push({ fixtureId: pred.fixture_id, error: error.message })
+        } else {
+          succeeded++
+        }
+      } catch (e) {
+        errors.push({ fixtureId: pred.fixture_id, error: e instanceof Error ? e.message : 'Unknown' })
+      }
+    }
+
+    setResyncResult({ attempted: toSync.length, succeeded, failed: errors.length, errors })
+    setResyncing(false)
+    // Re-run audit to show updated counts
+    const r = await runAudit()
+    setResult(r)
   }
 
   return (
@@ -272,6 +325,31 @@ export function SyncAudit() {
                   <div>
                     <p className="text-zinc-500 font-medium">Locked picks — missing from cloud ({gaps.lockedMissingFromCloud.length})</p>
                     <GapList ids={gaps.lockedMissingFromCloud} emptyMsg="All local locked picks exist in cloud ✓" />
+                    {gaps.lockedMissingFromCloud.length > 0 && (
+                      <button
+                        onClick={() => forceResync(gaps.lockedMissingFromCloud)}
+                        disabled={resyncing}
+                        className="mt-2 flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${resyncing ? 'animate-spin' : ''}`} />
+                        {resyncing ? 'Syncing…' : `Force Re-sync ${gaps.lockedMissingFromCloud.length} Missing Pick${gaps.lockedMissingFromCloud.length !== 1 ? 's' : ''}`}
+                      </button>
+                    )}
+                    {resyncResult && (
+                      <div className={`mt-2 rounded-md border px-3 py-2 ${resyncResult.failed === 0 ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}>
+                        <p className={`font-semibold ${resyncResult.failed === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                          Re-sync complete
+                        </p>
+                        <p className="text-zinc-600 mt-0.5">
+                          Attempted: {resyncResult.attempted} · Succeeded: {resyncResult.succeeded} · Failed: {resyncResult.failed}
+                        </p>
+                        {resyncResult.errors.map(e => (
+                          <p key={e.fixtureId} className="text-red-600 mt-0.5 font-mono">
+                            {e.fixtureId}: {e.error}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <p className="text-zinc-500 font-medium">Locked picks — missing locally ({gaps.lockedMissingLocally.length})</p>
