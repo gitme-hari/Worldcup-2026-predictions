@@ -11,6 +11,7 @@ import { ModelHealth } from './model-health'
 import { DisagreementAnalysis } from './disagreement-analysis'
 import { UpcomingAssistant } from './upcoming-assistant'
 import { DecisionEngine } from './decision-engine'
+import { OverrideROI } from './override-roi'
 
 const MODELS = ['A', 'B', 'C'] as const
 
@@ -100,6 +101,7 @@ export function AnalysisPanel() {
       <ModelHealth />
       <DisagreementAnalysis />
       <UpcomingAssistant />
+      <OverrideROI />
 
       {/* Model Leaderboard */}
       <Card>
