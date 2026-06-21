@@ -6,6 +6,7 @@ import {
   computeMetrics, fetchLiveData, getLiveData,
 } from '@/lib/store'
 import type { ComputedMetrics } from '@/lib/store'
+import { brierScore } from '@/lib/models'
 import type { SeedPrediction, SeedFixture } from '@/lib/seed-data'
 import { computeDisagreementScore } from '@/lib/analytics'
 import { MODEL_COLORS } from '@/lib/utils'
@@ -111,6 +112,71 @@ const TYPE_BADGE: Record<MatchType, string> = {
   'Draw Candidate': 'bg-purple-50 text-purple-700', 'Model Conflict': 'bg-red-50 text-red-600',
 }
 
+// ── Recommendation Stability ───────────────────────────────────────────────────
+
+type Stability = 'High' | 'Medium' | 'Low'
+
+interface StabilityResult {
+  stability: Stability
+  leaderStreak: number     // how many of the last WINDOW fixtures the current leader led
+  changes: number          // leadership changes in the last WINDOW fixtures
+  window: number           // how many fixtures were examined
+}
+
+function computeStability(currentLeader: string): StabilityResult | null {
+  const WINDOW = 10
+  const results     = getResults()
+  const predictions = getPredictions()
+
+  if (results.length < 3) return null
+
+  // Sort results chronologically — use entered_at as proxy (fixture order is fine too)
+  const sorted = [...results].sort((a, b) =>
+    new Date(a.entered_at).getTime() - new Date(b.entered_at).getTime()
+  )
+  const recent = sorted.slice(-WINDOW)
+
+  // For each completed fixture, determine which model had the lowest Brier score
+  const leaders: string[] = []
+  for (const r of recent) {
+    let bestModel = ''
+    let bestBrier = Infinity
+    for (const m of ['A', 'B', 'C'] as const) {
+      const pred = predictions.find(p => p.fixture_id === r.fixture_id && p.model === m)
+      if (!pred) continue
+      const b = brierScore(pred.home_win_prob, pred.draw_prob, pred.away_win_prob, r.home_goals, r.away_goals)
+      if (b < bestBrier) { bestBrier = b; bestModel = m }
+    }
+    if (bestModel) leaders.push(bestModel)
+  }
+
+  if (leaders.length < 2) return null
+
+  // Count leadership changes
+  let changes = 0
+  for (let i = 1; i < leaders.length; i++) {
+    if (leaders[i] !== leaders[i - 1]) changes++
+  }
+
+  // Streak: how many consecutive fixtures at the end the current leader has led
+  let streak = 0
+  for (let i = leaders.length - 1; i >= 0; i--) {
+    if (leaders[i] === currentLeader) streak++
+    else break
+  }
+
+  const stability: Stability =
+    changes <= 1 ? 'High' : changes <= 3 ? 'Medium' : 'Low'
+
+  return { stability, leaderStreak: streak, changes, window: leaders.length }
+}
+
+const STAB_BADGE: Record<Stability, string> = {
+  High:   'bg-green-100 text-green-700',
+  Medium: 'bg-amber-100 text-amber-700',
+  Low:    'bg-zinc-100 text-zinc-500',
+}
+
 // ── Section 1: Model Recommendation ───────────────────────────────────────────
 
 type Confidence = 'High' | 'Medium' | 'Low'
@@ -167,6 +233,7 @@ function ModelRecommendationCard() {
   }
 
   const { best, second, confidence, accGap, brierGap, explanation } = result
+  const stab = computeStability(best.model)
   return (
     <Card className="border-2 border-zinc-200">
       <CardHeader className="pb-2">
@@ -202,6 +269,23 @@ function ModelRecommendationCard() {
         </div>
         <div className="border-t border-zinc-100" />
         <p className="text-xs text-zinc-500 leading-relaxed">{explanation}</p>
+        {stab && (
+          <div className="flex items-start gap-2 rounded-md bg-zinc-50 px-2.5 py-2">
+            <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+              <span className="text-xs text-zinc-400">Stability</span>
+              <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${STAB_BADGE[stab.stability]}`}>
+                {stab.stability}
+              </span>
+            </div>
+            <p className="text-xs text-zinc-400 leading-snug">
+              {stab.stability === 'High'
+                ? `Model ${best.model} led ${stab.leaderStreak} of the last ${stab.window} completed fixtures.`
+                : stab.stability === 'Medium'
+                ? `Leadership changed ${stab.changes} times in the last ${stab.window} fixtures. Model ${best.model} currently leads.`
+                : `Models have exchanged leadership ${stab.changes} times in the last ${stab.window} fixtures — no consistent leader.`}
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="rounded-md bg-zinc-50 px-2.5 py-1.5">
             <p className="text-zinc-400">vs Model {second.model} — accuracy</p>
