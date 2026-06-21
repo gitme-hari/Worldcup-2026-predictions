@@ -627,17 +627,9 @@ function LiveIntelligencePanel() {
 // Write-once snapshot per fixture using the engine recommendation.
 
 function generateRecommendationSnapshots() {
-  const allFixtures  = getFixtures()
-  const allPreds     = getPredictions()
-  const results      = getResults()
-  const lockedPreds  = getLockedPredictions()
-  const playedIds    = new Set(results.map(r => r.fixture_id))
-  const lockedIds    = new Set(lockedPreds.map(p => p.fixture_id))
-  const now          = new Date()
-
-  allFixtures
-    .filter(f => !playedIds.has(f.id) && !lockedIds.has(f.id) && new Date(f.kickoff_utc) > now)
-    .forEach(f => {
+  const allFixtures = getFixtures()
+  const allPreds    = getPredictions()
+  allFixtures.forEach(f => {
       if (getPoolRecommendation(f.id)) return  // immutable — never overwrite
       const preds = allPreds.filter(p => p.fixture_id === f.id)
       const rec   = buildRecommendation(preds)
