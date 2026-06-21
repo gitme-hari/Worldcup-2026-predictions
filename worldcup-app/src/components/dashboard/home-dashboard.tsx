@@ -4,6 +4,7 @@ import Link from 'next/link'
 import {
   getFixtures, getTeams, getPredictions, getResults, getLockedPredictions,
   computeMetrics, fetchLiveData, getLiveData,
+  savePoolRecommendation, getPoolRecommendation,
 } from '@/lib/store'
 import type { SeedFixture } from '@/lib/seed-data'
 import { computeDisagreementScore } from '@/lib/analytics'
@@ -291,7 +292,7 @@ function PicksToSubmit({ needsPick, window, onWindowChange, poolModel }: {
                   <p className={`text-xs mt-0.5 ${confStyle}`}>Confidence: {confLabel}</p>
                 </div>
                 <Link
-                  href={`/matches/${fix.id}`}
+                  href={`/matches?fixture=${fix.id}&expand=true`}
                   className="shrink-0 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-700 transition-colors"
                 >
                   Review & Lock →
@@ -365,7 +366,7 @@ function HighRiskOpportunities({ needsPick }: { needsPick: SeedFixture[] }) {
                 })}
               </div>
               <p className="text-xs text-zinc-500">{reason} Potential swing match.</p>
-              <Link href={`/matches/${fix.id}`} className="inline-block text-xs text-blue-600 underline">
+              <Link href={`/matches?fixture=${fix.id}&expand=true`} className="inline-block text-xs text-blue-600 underline">
                 Review manually →
               </Link>
             </div>
@@ -538,6 +539,32 @@ function LiveIntelligencePanel() {
 
 // ── Root ───────────────────────────────────────────────────────────────────────
 
+function generateRecommendationSnapshots(poolModel: 'A' | 'B' | 'C') {
+  const allFixtures  = getFixtures()
+  const allPreds     = getPredictions()
+  const results      = getResults()
+  const lockedPreds  = getLockedPredictions()
+  const playedIds    = new Set(results.map(r => r.fixture_id))
+  const lockedIds    = new Set(lockedPreds.map(p => p.fixture_id))
+  const now          = new Date()
+
+  allFixtures
+    .filter(f => !playedIds.has(f.id) && !lockedIds.has(f.id) && new Date(f.kickoff_utc) > now)
+    .forEach(f => {
+      if (getPoolRecommendation(f.id)) return  // immutable — never overwrite
+      const pred = allPreds.find(p => p.fixture_id === f.id && p.model === poolModel)
+      if (!pred) return
+      const sl = topScoreline(pred.home_goals, pred.away_goals)
+      savePoolRecommendation({
+        fixture_id: f.id,
+        recommended_home: sl.h,
+        recommended_away: sl.a,
+        recommended_model: poolModel,
+        recommendation_reason: `Model ${poolModel} leads pool scoring`,
+      })
+    })
+}
+
 export function HomeDashboard() {
   const [mounted, setMounted] = useState(false)
   const [window, setWindow]   = useState<BettingWindow>('24h')
@@ -557,7 +584,10 @@ export function HomeDashboard() {
   const poolLeaderRow = poolRows.filter(r => r.label !== 'My Picks').sort((a, b) => b.pts - a.pts)[0] ?? null
   const poolLeader = poolLeaderRow ? { label: poolLeaderRow.label, pts: poolLeaderRow.pts } : null
   // Extract model letter for scoreline lookup ('A'|'B'|'C')
-  const poolModel  = poolLeaderRow?.model ?? 'A'
+  const poolModel  = (poolLeaderRow?.model ?? 'A') as 'A' | 'B' | 'C'
+
+  // Write immutable recommendation snapshots for all upcoming unlocked fixtures
+  generateRecommendationSnapshots(poolModel)
 
   return (
     <div className="space-y-4">

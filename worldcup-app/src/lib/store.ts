@@ -294,7 +294,11 @@ export interface LockedPrediction {
   draw_prob: number
   away_win_prob: number
   locked_at: string
-  pick_source?: 'raw' | 'calibrated' | 'custom'
+  pick_source?: 'raw' | 'calibrated' | 'custom' | 'pool_recommendation'
+  // Lineage fields — stored locally only, not synced to Supabase until migration
+  override_reason?: string
+  pool_rec_home?: number
+  pool_rec_away?: number
 }
 
 export function getLockedPredictions(): LockedPrediction[] {
@@ -460,4 +464,33 @@ export function getBestModel(): 'A' | 'B' | 'C' | null {
   const withData = metrics.filter(m => m.total > 0)
   if (!withData.length) return null
   return withData.sort((a, b) => b.accuracy - a.accuracy)[0].model
+}
+
+// --- Pool Recommendations (immutable snapshots, written once per fixture) ---
+
+export interface PoolRecommendation {
+  fixture_id: string
+  recommended_home: number
+  recommended_away: number
+  recommended_model: 'A' | 'B' | 'C'
+  recommendation_reason: string
+  generated_at: string
+}
+
+const POOL_RECS_KEY = 'wc26_pool_recs'
+
+export function getPoolRecommendations(): PoolRecommendation[] {
+  return load<PoolRecommendation[]>(POOL_RECS_KEY, [])
+}
+
+export function getPoolRecommendation(fixtureId: string): PoolRecommendation | undefined {
+  return getPoolRecommendations().find(r => r.fixture_id === fixtureId)
+}
+
+// Write-once: if a recommendation already exists for this fixture, do not overwrite it.
+export function savePoolRecommendation(rec: Omit<PoolRecommendation, 'generated_at'>) {
+  const existing = getPoolRecommendations()
+  if (existing.some(r => r.fixture_id === rec.fixture_id)) return
+  const full: PoolRecommendation = { ...rec, generated_at: new Date().toISOString() }
+  save(POOL_RECS_KEY, [...existing, full])
 }
