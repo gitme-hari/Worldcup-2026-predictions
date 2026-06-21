@@ -294,7 +294,7 @@ function PicksToSubmit({ needsPick, window, onWindowChange, poolModel }: {
                   href={`/matches/${fix.id}`}
                   className="shrink-0 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-700 transition-colors"
                 >
-                  Accept Pick →
+                  Review & Lock →
                 </Link>
               </div>
             </div>
