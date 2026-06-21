@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { getFixtures, getTeams, getPredictions, getResults, getResult, getOverride, getConfig, getPoolRecommendation } from '@/lib/store'
+import { getFixtures, getTeams, getPredictions, getResults, getResult, getOverride, getConfig } from '@/lib/store'
 import { computeHybrid } from '@/lib/models'
 import { formatDate, formatTime, pct, goals, MODEL_LABELS, STAGE_LABELS } from '@/lib/utils'
 import type { SeedFixture } from '@/lib/seed-data'
@@ -10,7 +10,8 @@ import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { ChevronRight, Search } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
+import { FixturePredictionPanel } from './fixture-prediction-panel'
 
 const GROUPS = ['All', ...'ABCDEFGHIJKL'.split('')]
 const STAGES = [
@@ -41,35 +42,40 @@ interface MatchListProps {
 }
 
 export function MatchList({ focusFixtureId }: MatchListProps = {}) {
-  const [mounted, setMounted] = useState(false)
-  const [group, setGroup] = useState('All')
-  const [stage, setStage] = useState('all')
+  const [mounted, setMounted]       = useState(false)
+  const [group, setGroup]           = useState('All')
+  const [stage, setStage]           = useState('all')
   const [modelFilter, setModelFilter] = useState('active')
-  const [matchday, setMatchday] = useState('all')
-  const [search, setSearch] = useState('')
+  const [matchday, setMatchday]     = useState('all')
+  const [search, setSearch]         = useState('')
   const focusRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => setMounted(true), [])
 
   useEffect(() => {
     if (!focusFixtureId || !focusRef.current) return
-    focusRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // slight delay to let render settle before scrolling
+    const t = setTimeout(() => {
+      focusRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 150)
+    return () => clearTimeout(t)
   }, [focusFixtureId, mounted])
 
   if (!mounted) return <div className="h-96 animate-pulse rounded-lg bg-zinc-100" />
 
-  const fixtures = getFixtures()
-  const teams = getTeams()
+  const fixtures   = getFixtures()
+  const teams      = getTeams()
   const predictions = getPredictions()
-  const config = getConfig()
-  const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
+  const results    = getResults()
+  const config     = getConfig()
+  const teamMap    = Object.fromEntries(teams.map(t => [t.id, t]))
+  const playedIds  = new Set(results.map(r => r.fixture_id))
 
   const displayModel = modelFilter === 'active' ? config.active_model : modelFilter
 
   let filtered = fixtures as SeedFixture[]
-
-  if (group !== 'All') filtered = filtered.filter(f => f.group === group)
-  if (stage !== 'all') filtered = filtered.filter(f => f.stage === stage)
+  if (group !== 'All')   filtered = filtered.filter(f => f.group === group)
+  if (stage !== 'all')   filtered = filtered.filter(f => f.stage === stage)
   if (matchday !== 'all') filtered = filtered.filter(f => String(f.matchday) === matchday)
   if (search.trim()) {
     const q = search.toLowerCase()
@@ -80,7 +86,6 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
              h?.code.toLowerCase().includes(q) || a?.code.toLowerCase().includes(q)
     })
   }
-
   filtered = filtered.sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
 
   const getPred = (fid: string, model: string) => {
@@ -133,21 +138,29 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
         {filtered.map(f => {
           const home = teamMap[f.home_team_id]
           const away = teamMap[f.away_team_id]
-          const pred = getPred(f.id, displayModel as string)
-          const result = getResult(f.id)
+          const isFocused  = f.id === focusFixtureId
+          const isPlayed   = playedIds.has(f.id)
+          const now        = new Date()
+          const kickoff    = new Date(f.kickoff_utc)
+          const isUpcoming = kickoff > now && !isPlayed
+
+          // Auto-expand the focused upcoming fixture as a prediction workspace
+          if (isFocused && isUpcoming) {
+            return (
+              <div key={f.id} ref={focusRef}>
+                <FixturePredictionPanel fixture={f} home={home} away={away} />
+              </div>
+            )
+          }
+
+          // All other rows: standard link card
+          const pred     = getPred(f.id, displayModel as string)
+          const result   = getResult(f.id)
           const override = getOverride(f.id)
-          const isFocused = f.id === focusFixtureId
-          const poolRec = isFocused ? getPoolRecommendation(f.id) : undefined
 
           return (
-            <div key={f.id} ref={isFocused ? focusRef : undefined}>
-              {isFocused && poolRec && (
-                <div className="mb-1 rounded-t-lg border border-b-0 border-blue-300 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                  <span className="font-semibold">Recommended pick:</span> {poolRec.recommended_home}–{poolRec.recommended_away} (Model {poolRec.recommended_model}) · {poolRec.recommendation_reason}
-                </div>
-              )}
-            <Link href={`/matches/${f.id}`}>
-              <Card className={`hover:border-zinc-300 cursor-pointer transition-colors ${isFocused ? 'border-blue-400 ring-2 ring-blue-200' : ''}`}>
+            <Link key={f.id} href={`/matches/${f.id}`}>
+              <Card className="hover:border-zinc-300 cursor-pointer transition-colors">
                 <div className="px-3 py-2.5">
                   {/* Header row */}
                   <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -204,7 +217,6 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
                 </div>
               </Card>
             </Link>
-            </div>
           )
         })}
       </div>

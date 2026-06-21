@@ -295,6 +295,10 @@ export interface LockedPrediction {
   away_win_prob: number
   locked_at: string
   pick_source?: 'raw' | 'calibrated' | 'custom'
+  // Lineage fields — stored locally only, not synced to Supabase until migration
+  override_reason?: string
+  pool_rec_home?: number
+  pool_rec_away?: number
 }
 
 export function getLockedPredictions(): LockedPrediction[] {
