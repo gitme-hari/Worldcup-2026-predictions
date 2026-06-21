@@ -363,27 +363,33 @@ export interface HumanBiasSummary {
   teamId: string
   samples: number
   avg: number
-  qualified: boolean  // samples >= 3 && |avg| > 0.01
+  // reliable = 3+ samples, low = 2 samples, insufficient = 1 sample
+  confidence: 'reliable' | 'low' | 'insufficient'
+  qualified: boolean  // backward compat: confidence !== 'insufficient' && |avg| > 0.01
 }
 
 // Compares human overrides against the ORIGINAL seed model prediction (not the locked value).
-// When pick_source='custom', locked.home_goals === hp.home_goals so that delta is always 0.
-// The correct baseline is the seed prediction for locked.model.
+// Falls back to active model when no LockedPrediction exists (sync-gap defence).
+// Only counts overrides that have a completed result (completed = has actual score).
 export function computeHumanBiasData(): HumanBiasSummary[] {
   const humanPreds = getHumanPredictions()
   const lockedPreds = getLockedPredictions()
   const allPreds = getPredictions()
   const fixtures = getFixtures()
+  const results = getResults()
+  const activeModel = (load<{ active_model?: string }>(KEYS.config, {}).active_model ?? 'A') as 'A' | 'B' | 'C'
 
   const teamDeltas: Record<string, number[]> = {}
 
   for (const hp of humanPreds) {
-    const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
-    if (!locked) continue
+    // Only use completed overrides (match has a result)
+    if (!results.find(r => r.fixture_id === hp.fixture_id)) continue
     const fixture = fixtures.find(f => f.id === hp.fixture_id)
     if (!fixture) continue
 
-    const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === (locked.model as 'A' | 'B' | 'C'))
+    const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+    const modelKey = (locked?.model as 'A' | 'B' | 'C' | undefined) || activeModel
+    const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === modelKey)
     if (!origPred) continue
 
     const homeDelta = hp.home_goals - origPred.home_goals
@@ -397,11 +403,14 @@ export function computeHumanBiasData(): HumanBiasSummary[] {
 
   return Object.entries(teamDeltas).map(([teamId, deltas]) => {
     const avg = deltas.reduce((s, d) => s + d, 0) / deltas.length
+    const rounded = Math.round(avg * 100) / 100
+    const confidence: HumanBiasSummary['confidence'] = deltas.length >= 3 ? 'reliable' : deltas.length >= 2 ? 'low' : 'insufficient'
     return {
       teamId,
       samples: deltas.length,
-      avg: Math.round(avg * 100) / 100,
-      qualified: deltas.length >= 3 && Math.abs(avg) > 0.01,
+      avg: rounded,
+      confidence,
+      qualified: confidence !== 'insufficient' && Math.abs(rounded) > 0.01,
     }
   })
 }
