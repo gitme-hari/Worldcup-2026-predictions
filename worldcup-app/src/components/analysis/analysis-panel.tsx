@@ -226,12 +226,21 @@ export function AnalysisPanel() {
         </div>
       </Card>
 
-      {/* You vs The Model — uses original seed prediction as model baseline, not locked value.
-          Falls back to active model when no LockedPrediction exists (e.g. sync gap). */}
+      {/* You vs The Model — uses original seed prediction as model baseline.
+          Falls back to active model when no LockedPrediction exists (sync gap).
+          Only completed overrides (with an actual result) count toward accuracy. */}
       {humanPredsList.length > 0 && (() => {
         const activeModel = (getConfig().active_model ?? 'A') as 'A' | 'B' | 'C'
-        // Build rows: completed overrides only (have a result)
-        const completedRows = humanPredsList.flatMap(hp => {
+        const pending = humanPredsList.filter(hp => !results.find(r => r.fixture_id === hp.fixture_id))
+
+        type OverrideRow = {
+          fixtureId: string; homeTeam: typeof teamMap[string]; awayTeam: typeof teamMap[string]
+          origHome: number; origAway: number; modelKey: string; noLock: boolean
+          humanHome: number; humanAway: number
+          actualHome: number; actualAway: number
+          humanCorrect: boolean; modelCorrect: boolean
+        }
+        const completedRows: OverrideRow[] = humanPredsList.flatMap(hp => {
           const result = results.find(r => r.fixture_id === hp.fixture_id)
           if (!result) return []
           const fixture = fixtures.find(f => f.id === hp.fixture_id)
@@ -239,45 +248,39 @@ export function AnalysisPanel() {
           const home = teamMap[fixture.home_team_id]
           const away = teamMap[fixture.away_team_id]
           if (!home || !away) return []
-          // Use locked model if available, fall back to active model (covers sync-gap cases)
           const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
-          const modelKey = locked ? (locked.model as 'A' | 'B' | 'C') : activeModel
+          // Fall back to active model when no lock or model field is empty/null
+          const modelKey = (locked?.model as 'A' | 'B' | 'C' | undefined) || activeModel
           const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === modelKey)
           if (!origPred) return []
           const actualOutcome = getOutcome(result.home_goals, result.away_goals)
-          return [{
-            fixtureId: fixture.id,
-            homeTeam: home, awayTeam: away,
-            origHome: origPred.home_goals, origAway: origPred.away_goals,
-            modelKey,
-            noLock: !locked,
+          return [{ fixtureId: fixture.id, homeTeam: home, awayTeam: away,
+            origHome: origPred.home_goals, origAway: origPred.away_goals, modelKey, noLock: !locked,
             humanHome: hp.home_goals, humanAway: hp.away_goals,
-            comment: hp.comment,
             actualHome: result.home_goals, actualAway: result.away_goals,
             humanCorrect: getOutcome(hp.home_goals, hp.away_goals) === actualOutcome,
             modelCorrect: getOutcome(origPred.home_goals, origPred.away_goals) === actualOutcome,
           }]
         })
 
-        const total = humanPredsList.length
-        const pending = total - completedRows.length
         const youCorrect = completedRows.filter(r => r.humanCorrect).length
         const modelCorrect = completedRows.filter(r => r.modelCorrect).length
         const youBeat = completedRows.filter(r => r.humanCorrect && !r.modelCorrect).length
         const modelBeat = completedRows.filter(r => r.modelCorrect && !r.humanCorrect).length
         const bothWrong = completedRows.filter(r => !r.humanCorrect && !r.modelCorrect).length
+        const fallbackCount = completedRows.filter(r => r.noLock).length
 
         return (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 text-blue-500" />You vs The Model</CardTitle>
-              <p className="text-xs text-zinc-400 mt-0.5">Comparing your custom picks against the original seed model prediction.</p>
+              <p className="text-xs text-zinc-400 mt-0.5">Custom picks vs original seed model prediction. Pending matches excluded from accuracy.</p>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-4 gap-2 mb-4 text-center">
+              <div className="grid grid-cols-4 gap-2 mb-3 text-center">
                 <div className="rounded-lg bg-zinc-50 px-2 py-2">
                   <div className="text-xs text-zinc-400">Total</div>
-                  <div className="text-xl font-bold text-zinc-700">{total}</div>
+                  <div className="text-xl font-bold text-zinc-700">{humanPredsList.length}</div>
                 </div>
                 <div className="rounded-lg bg-zinc-50 px-2 py-2">
                   <div className="text-xs text-zinc-400">Completed</div>
@@ -293,7 +296,7 @@ export function AnalysisPanel() {
                 </div>
               </div>
               {completedRows.length > 0 && (
-                <div className="grid grid-cols-3 gap-2 mb-4 text-center text-xs">
+                <div className="grid grid-cols-3 gap-2 mb-3 text-center text-xs">
                   <div className="rounded bg-green-50 px-2 py-1.5">
                     <div className="text-green-600 font-semibold">{youBeat}</div>
                     <div className="text-green-700">You beat model</div>
@@ -308,22 +311,14 @@ export function AnalysisPanel() {
                   </div>
                 </div>
               )}
-              {(() => {
-                const noLockCount = completedRows.filter(r => r.noLock).length
-                const pendingCount = humanPredsList.length - completedRows.length
-                return (
-                  <>
-                    {noLockCount > 0 && (
-                      <p className="text-xs text-amber-600 mb-2">
-                        {noLockCount} match{noLockCount > 1 ? 'es' : ''} had no lock saved — used Model {activeModel} (active) as baseline.
-                      </p>
-                    )}
-                    {pendingCount > 0 && (
-                      <p className="text-xs text-zinc-400 mb-3">{pendingCount} override{pendingCount > 1 ? 's' : ''} pending result.</p>
-                    )}
-                  </>
-                )
-              })()}
+              {fallbackCount > 0 && (
+                <p className="text-xs text-amber-600 mb-2">
+                  {fallbackCount} match{fallbackCount > 1 ? 'es' : ''}: no lock found in localStorage — used Model {activeModel} (active) as baseline.
+                </p>
+              )}
+              {pending.length > 0 && (
+                <p className="text-xs text-zinc-400 mb-3">{pending.length} override{pending.length > 1 ? 's' : ''} pending result — not counted above.</p>
+              )}
               {completedRows.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -368,10 +363,13 @@ export function AnalysisPanel() {
         )
       })()}
 
-      {/* Human Override Learning (replaces "Model D") */}
+      {/* Human Override Learning */}
       {humanPredsList.length > 0 && (() => {
         const biasData = computeHumanBiasData()
-        const qualified = biasData.filter(b => b.qualified)
+        // Gate: need 3 total completed overrides before showing any learning
+        const completedCount = humanPredsList.filter(hp => results.find(r => r.fixture_id === hp.fixture_id)).length
+        const showable = biasData.filter(b => b.qualified)
+
         return (
           <Card>
             <CardHeader>
@@ -380,19 +378,21 @@ export function AnalysisPanel() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {qualified.length === 0 ? (
+              {completedCount < 3 ? (
                 <div className="rounded-md bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
-                  <p className="font-medium text-zinc-700 mb-1">Not enough data yet</p>
-                  <p>Need at least 3 custom overrides per team to compute a reliable bias.{' '}
-                    {biasData.length === 0
-                      ? 'No overrides recorded yet.'
-                      : `Current samples: ${biasData.map(b => `${b.teamId.toUpperCase()} (${b.samples})`).join(', ')}.`}
+                  <p className="font-medium text-zinc-700 mb-1">Need more completed custom overrides</p>
+                  <p>{completedCount} of 3 required completed overrides reached. Learning activates at 3 total.</p>
+                </div>
+              ) : showable.length === 0 ? (
+                <div className="rounded-md bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
+                  <p className="font-medium text-zinc-700 mb-1">No team patterns yet</p>
+                  <p>Each team needs 2+ overrides to show a trend.{' '}
+                    {biasData.length > 0 && `Current: ${biasData.map(b => `${b.teamId.toUpperCase()} (${b.samples})`).join(', ')}.`}
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <p className="text-xs text-zinc-500">Per-team goal delta vs original model prediction. Minimum 3 overrides required.</p>
-                  {qualified.map(({ teamId, avg, samples }) => {
+                  {showable.map(({ teamId, avg, samples, confidence }) => {
                     const team = teamMap[teamId]
                     return (
                       <div key={teamId} className="flex items-center gap-3">
@@ -403,16 +403,18 @@ export function AnalysisPanel() {
                             style={{ width: `${Math.min(100, Math.abs(avg) * 50)}%`, marginLeft: avg < 0 ? 'auto' : undefined }} />
                         </div>
                         <span className={`text-xs font-semibold tabular-nums w-16 text-right ${avg > 0 ? 'text-blue-600' : 'text-red-500'}`}>
-                          {avg > 0 ? '+' : ''}{avg.toFixed(2)} goals
+                          {avg > 0 ? '+' : ''}{avg.toFixed(2)}
                         </span>
-                        <span className="text-xs text-zinc-400 w-12 text-right">{samples} picks</span>
+                        <span className={`text-xs w-20 text-right ${confidence === 'reliable' ? 'text-zinc-500' : 'text-amber-500'}`}>
+                          {samples} pick{samples > 1 ? 's' : ''} · {confidence}
+                        </span>
                       </div>
                     )
                   })}
                 </div>
               )}
 
-              {/* Debug table: all custom overrides with original model prediction */}
+              {/* Debug table with reason column */}
               <details className="border-t border-zinc-100 pt-3">
                 <summary className="text-xs text-zinc-400 cursor-pointer hover:text-zinc-600 select-none">
                   All overrides ({humanPredsList.length}) — click to inspect
@@ -426,6 +428,7 @@ export function AnalysisPanel() {
                         <th className="px-3 py-2 text-center font-medium text-zinc-500">Your pick</th>
                         <th className="px-3 py-2 text-center font-medium text-zinc-500">Δ goals</th>
                         <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+                        <th className="px-3 py-2 text-left font-medium text-zinc-500">Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -435,23 +438,27 @@ export function AnalysisPanel() {
                         const home = teamMap[fixture.home_team_id]
                         const away = teamMap[fixture.away_team_id]
                         const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
-                        const origPred = locked
+                        const hasModel = locked && locked.model
+                        const origPred = hasModel
                           ? allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === (locked.model as 'A' | 'B' | 'C'))
                           : null
                         const result = results.find(r => r.fixture_id === hp.fixture_id)
-                        const dH = origPred != null ? hp.home_goals - origPred.home_goals : null
-                        const dA = origPred != null ? hp.away_goals - origPred.away_goals : null
-                        const noLock = !locked
-                        const noPred = locked && !origPred
+                        const dH = origPred ? hp.home_goals - origPred.home_goals : null
+                        const dA = origPred ? hp.away_goals - origPred.away_goals : null
+
+                        type Reason = 'resolved' | 'no locked prediction found' | 'model missing' | 'seed prediction missing'
+                        const reason: Reason = !locked ? 'no locked prediction found'
+                          : !hasModel ? 'model missing'
+                          : !origPred ? 'seed prediction missing'
+                          : 'resolved'
+
                         return (
-                          <tr key={hp.fixture_id} className="border-b border-zinc-50">
+                          <tr key={hp.fixture_id} className={`border-b border-zinc-50 ${reason !== 'resolved' ? 'bg-amber-50/30' : ''}`}>
                             <td className="px-3 py-2 whitespace-nowrap">
                               {home?.flag_url} {home?.code} v {away?.code} {away?.flag_url}
                             </td>
                             <td className="px-3 py-2 text-center font-mono text-zinc-400">
-                              {origPred
-                                ? `${origPred.home_goals.toFixed(1)}–${origPred.away_goals.toFixed(1)}`
-                                : <span className="text-amber-500 not-italic">{noLock ? 'no lock' : noPred ? 'pred missing' : '—'}</span>}
+                              {origPred ? `${origPred.home_goals.toFixed(1)}–${origPred.away_goals.toFixed(1)}` : <span className="text-zinc-300">—</span>}
                             </td>
                             <td className="px-3 py-2 text-center font-mono font-semibold text-blue-600">
                               {hp.home_goals}–{hp.away_goals}
@@ -465,6 +472,11 @@ export function AnalysisPanel() {
                             </td>
                             <td className="px-3 py-2 text-center font-mono font-bold text-zinc-900">
                               {result ? `${result.home_goals}–${result.away_goals}` : <span className="text-zinc-300">pending</span>}
+                            </td>
+                            <td className="px-3 py-2">
+                              {reason === 'resolved'
+                                ? <span className="text-green-600">resolved</span>
+                                : <span className="text-amber-600">{reason}</span>}
                             </td>
                           </tr>
                         )
