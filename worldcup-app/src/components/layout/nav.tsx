@@ -10,7 +10,7 @@ const NAV = [
   { href: '/groups', label: 'Groups', icon: Users },
   { href: '/bracket', label: 'Bracket', icon: GitBranch },
   { href: '/bonus', label: 'Bonus', icon: Star },
-  { href: '/analysis', label: 'Analysis', icon: FlaskConical },
+  { href: '/analysis', label: 'Performance', icon: FlaskConical },
   { href: '/settings', label: 'Settings', icon: Settings },
 ]
 

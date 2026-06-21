@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiasData, computeCalibration, getConfig } from '@/lib/store'
+import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiasData, computeCalibration } from '@/lib/store'
 import { getOutcome } from '@/lib/models'
 import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -129,7 +129,7 @@ export function AnalysisPanel() {
 
       {/* ── 1. Pool Performance ──────────────────────────────────────────────── */}
       {(() => {
-        const activeModel = (getConfig().active_model ?? 'A') as 'A' | 'B' | 'C'
+        const activeModel: 'A' | 'B' | 'C' = 'A'
         const pending = humanPredsList.filter(hp => !results.find(r => r.fixture_id === hp.fixture_id))
 
         type OverrideRow = {
@@ -344,8 +344,8 @@ export function AnalysisPanel() {
         >
           <div className="flex items-center gap-2">
             <Brain className="h-3.5 w-3.5 text-indigo-400" />
-            <span className="text-sm font-semibold text-zinc-700">Model Debugging</span>
-            <span className="text-xs text-zinc-400">— Model A/B/C diagnostics, leaderboard, raw match data</span>
+            <span className="text-sm font-semibold text-zinc-700">Engine Diagnostics</span>
+            <span className="text-xs text-zinc-400">— Internal model breakdown, leaderboard, raw match data</span>
           </div>
           {showDebug ? <ChevronUp className="h-4 w-4 text-zinc-400" /> : <ChevronDown className="h-4 w-4 text-zinc-400" />}
         </button>

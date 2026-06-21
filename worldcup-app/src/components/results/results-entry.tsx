@@ -2,11 +2,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   getFixtures, getTeams, getResult, saveResult, deleteResult,
-  getPredictions, getConfig, getLockedPrediction, saveLockPrediction, deleteLockedPrediction,
+  getPredictions, getLockedPrediction, saveLockPrediction, deleteLockedPrediction,
   getHumanPrediction, saveHumanPrediction, computeCalibration,
 } from '@/lib/store'
-import { getEffectivePrediction } from '@/lib/models'
-import { formatDate, formatTime, goalsDisplay, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
+import { engineScore } from '@/lib/models'
+import { formatDate, formatTime, goalsDisplay } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,10 +16,10 @@ import type { ModelKey } from '@/lib/types'
 import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
 
 const MODEL_OPTIONS: { value: ModelKey; label: string }[] = [
-  { value: 'A', label: 'Model A (Poisson)' },
-  { value: 'B', label: 'Model B (ML)' },
-  { value: 'C', label: 'Model C (Live)' },
-  { value: 'D', label: 'Model D (Human)' },
+  { value: 'A', label: 'Poisson' },
+  { value: 'B', label: 'ML' },
+  { value: 'C', label: 'Live Intelligence' },
+  { value: 'D', label: 'Human' },
   { value: 'hybrid', label: 'Hybrid' },
 ]
 
@@ -154,7 +154,6 @@ function ResultRow({
   awayTeam: { name: string; code: string; flag_url: string } | undefined
   onResultChange: () => void   // tells parent to re-render so counts update
 }) {
-  const config = getConfig()
   const predictions = getPredictions()
 
   // ── Derive persistent state directly from localStorage every render ──────
@@ -167,16 +166,20 @@ function ResultRow({
 
   // ── Local UI-only state (inputs, dialogs) ────────────────────────────────
   const [selectedModel, setSelectedModel] = useState<ModelKey>(
-    (locked?.model as ModelKey) ?? config.active_model
+    (locked?.model as ModelKey) ?? 'A'
   )
   const [homeActual, setHomeActual] = useState(existing?.home_goals ?? 0)
   const [awayActual, setAwayActual] = useState(existing?.away_goals ?? 0)
   const [showConfirm, setShowConfirm] = useState(false)
   const [showPickSheet, setShowPickSheet] = useState(false)
 
-  const livePred = getEffectivePrediction(predictions as any, fixture.id, selectedModel, {
-    a: config.weight_a, b: config.weight_b, c: config.weight_c,
-  })
+  // Engine-native score: average of all models, or specific model if selected
+  const modelPred = predictions.find(p => p.fixture_id === fixture.id && p.model === selectedModel)
+  const engineAvg = engineScore(predictions, fixture.id)
+  const livePred = modelPred ?? (engineAvg ? {
+    home_goals: engineAvg.home, away_goals: engineAvg.away,
+    home_win_prob: 0.33, draw_prob: 0.33, away_win_prob: 0.33,
+  } : null)
   const displayPred = locked ?? livePred
 
   const calibration = computeCalibration()
@@ -244,8 +247,14 @@ function ResultRow({
     onResultChange()
   }
 
+  const ENGINE_LABELS: Record<string, string> = {
+    A: 'Poisson', B: 'ML', C: 'Live', D: 'Human', hybrid: 'Hybrid',
+  }
+  const ENGINE_COLORS: Record<string, string> = {
+    A: 'bg-blue-500', B: 'bg-purple-500', C: 'bg-green-500', D: 'bg-indigo-500', hybrid: 'bg-orange-500',
+  }
   const activeModel = (locked?.model ?? selectedModel) as ModelKey
-  const modelColor  = MODEL_COLORS[activeModel] ?? 'bg-zinc-500'
+  const modelColor  = ENGINE_COLORS[activeModel] ?? 'bg-zinc-500'
 
   // Outcome helpers
   const outcome = (hg: number, ag: number) => hg > ag ? 'H' : ag > hg ? 'A' : 'D'
@@ -303,7 +312,7 @@ function ResultRow({
               <div className="flex items-center gap-1.5">
                 <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium text-white ${modelColor} ${isSaved ? 'opacity-60' : ''}`}>
                   <Lock className="h-2.5 w-2.5" />
-                  {MODEL_LABELS[activeModel]}
+                  {ENGINE_LABELS[activeModel] ?? activeModel}
                 </span>
                 {!isSaved && (
                   <button onClick={handleUnlock} className="text-zinc-300 hover:text-zinc-500" title="Unlock model">
@@ -489,7 +498,7 @@ export function ResultsEntry() {
       </div>
 
       <div className="text-xs text-zinc-400 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-        Select a model → click <strong>Lock</strong> to freeze before kickoff → enter the actual score and <strong>Save</strong>. Results persist in your browser. Saving feeds the <strong>Analysis</strong> page.
+        Select a model → click <strong>Lock</strong> to freeze before kickoff → enter the actual score and <strong>Save</strong>. Results persist in your browser. Saving feeds the <strong>Performance</strong> page.
       </div>
 
       {/* Hidden span forces re-render when rev changes, ensuring fresh localStorage reads */}
