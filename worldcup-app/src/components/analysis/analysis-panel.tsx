@@ -12,6 +12,7 @@ import { DisagreementAnalysis } from './disagreement-analysis'
 import { UpcomingAssistant } from './upcoming-assistant'
 import { DecisionEngine } from './decision-engine'
 import { OverrideROI } from './override-roi'
+import { TeamFormCard } from './team-form-card'
 
 const MODELS = ['A', 'B', 'C'] as const
 
@@ -263,7 +264,15 @@ export function AnalysisPanel() {
         )
       })()}
 
-      {/* ── 2. Exact Score Diagnosis ─────────────────────────────────────────── */}
+      {/* ── 2. Team Form ─────────────────────────────────────────────────────── */}
+      <TeamFormCard
+        teams={teams}
+        fixtures={fixtures}
+        results={results}
+        predictions={allPreds}
+      />
+
+      {/* ── 3. Exact Score Diagnosis ─────────────────────────────────────────── */}
       {totalScoredPicks > 0 && (
         <Card>
           <CardHeader>
@@ -330,13 +339,13 @@ export function AnalysisPanel() {
         </Card>
       )}
 
-      {/* ── 3. Override ROI ──────────────────────────────────────────────────── */}
+      {/* ── 4. Override ROI ──────────────────────────────────────────────────── */}
       <OverrideROI />
 
-      {/* ── 4. Upcoming Risk Review ──────────────────────────────────────────── */}
+      {/* ── 5. Upcoming Risk Review ──────────────────────────────────────────── */}
       <UpcomingAssistant />
 
-      {/* ── 5. Model Debugging (collapsed by default) ────────────────────────── */}
+      {/* ── 6. Model Debugging (collapsed by default) ────────────────────────── */}
       <Card>
         <button
           onClick={() => setShowDebug(v => !v)}
