@@ -7,9 +7,11 @@ import {
   savePoolRecommendation, getPoolRecommendation,
 } from '@/lib/store'
 import type { SeedFixture } from '@/lib/seed-data'
+import { buildRecommendation } from '@/lib/recommendation-engine'
+import { buildTeamAdjustments, teamSignal, hasNotableSignal } from '@/lib/learning-layer'
 import { computeDisagreementScore } from '@/lib/analytics'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { AlertCircle, AlertTriangle, ClipboardList, RefreshCw, Trophy } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle, ClipboardList, RefreshCw, TrendingUp, Trophy } from 'lucide-react'
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -42,17 +44,13 @@ function timeUntil(utc: string): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
-function poissonProb(lambda: number, k: number): number {
-  let p = Math.exp(-lambda)
-  for (let i = 1; i <= k; i++) p *= lambda / i
-  return p
-}
-
-function topScoreline(hl: number, al: number): { h: number; a: number; p: number } {
+function poissonModeScoreline(hl: number, al: number): { h: number; a: number } {
   let best = { h: 0, a: 0, p: 0 }
   for (let h = 0; h <= 6; h++)
     for (let a = 0; a <= 6; a++) {
-      const p = poissonProb(hl, h) * poissonProb(al, a)
+      let p = Math.exp(-(hl + al))
+      for (let i = 1; i <= h; i++) p *= hl / i
+      for (let i = 1; i <= a; i++) p *= al / i
       if (p > best.p) best = { h, a, p }
     }
   return best
@@ -69,7 +67,8 @@ function poolScore(predH: number, predA: number, actH: number, actA: number): nu
   return 0
 }
 
-// Pool scoring for each model + my locked picks
+// ── Pool rows: My Picks + model benchmarks ─────────────────────────────────────
+
 function computePoolRows() {
   const allPreds    = getPredictions()
   const lockedPreds = getLockedPredictions()
@@ -99,7 +98,7 @@ function computePoolRows() {
 }
 
 type BettingWindow = '24h' | '36h' | 'all'
-const WINDOW_LABELS: Record<BettingWindow, string> = { '24h': 'Next 24h', '36h': 'Next 36h', all: 'All Unlocked' }
+const WINDOW_LABELS: Record<BettingWindow, string> = { '24h': 'Next 24h', '36h': 'Next 36h', all: 'All' }
 
 function filterFixtures(window: BettingWindow): SeedFixture[] {
   const fixtures    = getFixtures()
@@ -113,105 +112,112 @@ function filterFixtures(window: BettingWindow): SeedFixture[] {
 
   return fixtures.filter(f => {
     if (playedIds.has(f.id) || lockedIds.has(f.id)) return false
-    const kick = new Date(f.kickoff_utc)
-    if (kick <= now) return false
-    if (cutoff && kick > cutoff) return false
+    if (new Date(f.kickoff_utc) <= now) return false
+    if (cutoff && new Date(f.kickoff_utc) > cutoff) return false
     return true
   }).sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
 }
 
-// ── Section 1: Betting Summary ─────────────────────────────────────────────────
+// ── Section 1: Action Summary ─────────────────────────────────────────────────
+// Answers "what do I need to do?" and "where am I in the pool?"
 
-function BettingSummary({ needsPick, poolLeader }: {
+function ActionSummary({ needsPick, poolRows }: {
   needsPick: SeedFixture[]
-  poolLeader: { label: string; pts: number } | null
+  poolRows: ReturnType<typeof computePoolRows>
 }) {
-  const accuracyLeader = (() => {
-    const metrics = computeMetrics().filter(m => m.total > 0)
-    if (!metrics.length) return null
-    return metrics.reduce((best, m) => m.accuracy > best.accuracy ? m : best)
-  })()
-
-  const first = needsPick[0]
+  const first    = needsPick[0]
   const deadline = first ? timeUntil(first.kickoff_utc) : null
+  const teams    = getTeams()
   const firstTeams = first ? (() => {
-    const teams = getTeams()
     const h = teams.find(t => t.id === first.home_team_id)
     const a = teams.find(t => t.id === first.away_team_id)
-    return `${h?.code ?? '?'} vs ${a?.code ?? '?'}`
+    return `${h?.flag_url ?? ''} ${h?.code ?? '?'} vs ${a?.code ?? '?'} ${a?.flag_url ?? ''}`
   })() : null
 
-  const poolDiffersFromAccuracy =
-    poolLeader && accuracyLeader &&
-    poolLeader.label !== `Model ${accuracyLeader.model}`
+  const myRow    = poolRows.find(r => r.label === 'My Picks')
+  const bestModel = poolRows.filter(r => r.model !== 'me').sort((a, b) => b.pts - a.pts)[0]
+  const gap = myRow && bestModel ? bestModel.pts - myRow.pts : null
+
+  const hasData = (myRow?.count ?? 0) > 0
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
-          <ClipboardList className="h-4 w-4 text-blue-500" /> Betting Summary
+          <ClipboardList className="h-4 w-4 text-blue-500" /> Action Summary
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Status line */}
-        <div className="flex items-center justify-between gap-3">
-          <div>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+          {/* Picks needed */}
+          <div className="rounded-lg bg-zinc-50 border border-zinc-100 px-3 py-3">
             {needsPick.length > 0 ? (
               <>
-                <p className="text-lg font-bold text-zinc-900">{needsPick.length} match{needsPick.length !== 1 ? 'es' : ''} need{needsPick.length === 1 ? 's' : ''} a pick</p>
-                {deadline && firstTeams && (
-                  <p className="text-xs text-zinc-400 mt-0.5">First deadline in <span className="font-semibold text-zinc-600">{deadline}</span> · {firstTeams}</p>
+                <p className="text-2xl font-black text-zinc-900 tabular-nums">{needsPick.length}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  pick{needsPick.length !== 1 ? 's' : ''} needed
+                </p>
+                {deadline && (
+                  <p className="text-[11px] text-amber-600 font-medium mt-1">
+                    First in {deadline}
+                  </p>
                 )}
               </>
             ) : (
-              <p className="text-sm font-medium text-zinc-500">All picks are locked for this window.</p>
+              <>
+                <CheckCircle className="h-5 w-5 text-emerald-500 mb-1" />
+                <p className="text-xs text-zinc-500">All picks locked</p>
+              </>
+            )}
+          </div>
+
+          {/* Pool position */}
+          <div className="rounded-lg bg-zinc-50 border border-zinc-100 px-3 py-3">
+            {hasData ? (
+              <>
+                <p className="text-2xl font-black text-zinc-900 tabular-nums">{myRow!.pts}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  my pts{myRow!.count > 0 ? ` · ${myRow!.avg.toFixed(1)}/match` : ''}
+                </p>
+                {gap !== null && gap > 0 && (
+                  <p className="text-[11px] text-red-500 font-medium mt-1">
+                    −{gap} vs {bestModel?.label}
+                  </p>
+                )}
+                {gap !== null && gap <= 0 && (
+                  <p className="text-[11px] text-emerald-600 font-medium mt-1">
+                    Leading pool
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-black text-zinc-300">—</p>
+                <p className="text-xs text-zinc-400 mt-0.5">no results yet</p>
+              </>
             )}
           </div>
         </div>
 
-        {poolLeader && (
-          <>
-            <div className="border-t border-zinc-100" />
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-zinc-500">Recommended strategy</p>
-              <p className="text-sm text-zinc-700">
-                Follow <span className="font-semibold">{poolLeader.label}</span> scorelines
-              </p>
-              <p className="text-xs text-zinc-400">
-                {poolLeader.label} leads pool scoring with {poolLeader.pts} pts
-                {poolDiffersFromAccuracy && accuracyLeader
-                  ? ` — Model ${accuracyLeader.model} leads outcome accuracy but not pool points`
-                  : ''}
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-md bg-zinc-50 px-2.5 py-2">
-                <p className="text-zinc-400">Pool scoring</p>
-                <p className="font-semibold text-zinc-800">{poolLeader.label}</p>
-                <p className="text-zinc-400">{poolLeader.pts} pts</p>
-              </div>
-              {accuracyLeader && (
-                <div className="rounded-md bg-zinc-50 px-2.5 py-2">
-                  <p className="text-zinc-400">Outcome accuracy</p>
-                  <p className="font-semibold text-zinc-800">Model {accuracyLeader.model}</p>
-                  <p className="text-zinc-400">{(accuracyLeader.accuracy * 100).toFixed(0)}% correct</p>
-                </div>
-              )}
-            </div>
-          </>
+        {/* Upcoming fixture teaser */}
+        {firstTeams && (
+          <p className="mt-2.5 text-[11px] text-zinc-400">
+            Next: {firstTeams} · {berlinLabel(first!.kickoff_utc)}
+          </p>
         )}
       </CardContent>
     </Card>
   )
 }
 
-// ── Section 2: Picks To Submit ─────────────────────────────────────────────────
+// ── Section 2: Picks to Submit ─────────────────────────────────────────────────
+// Engine recommendation per fixture — no model labels in primary view
 
-function PicksToSubmit({ needsPick, window, onWindowChange, poolModel }: {
+function PicksToSubmit({ needsPick, window, onWindowChange, learningAdjs }: {
   needsPick: SeedFixture[]
   window: BettingWindow
   onWindowChange: (w: BettingWindow) => void
-  poolModel: string   // e.g. 'A' | 'B' | 'C' — the pool-leading model
+  learningAdjs: ReturnType<typeof buildTeamAdjustments>
 }) {
   const allPreds = getPredictions()
   const teams    = getTeams()
@@ -221,9 +227,9 @@ function PicksToSubmit({ needsPick, window, onWindowChange, poolModel }: {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
-          <Trophy className="h-4 w-4 text-amber-500" /> Picks To Submit
+          <Trophy className="h-4 w-4 text-amber-500" /> Picks to Submit
         </CardTitle>
-        <div className="flex gap-1.5 mt-2 flex-wrap">
+        <div className="flex gap-1.5 mt-2">
           {(['24h', '36h', 'all'] as BettingWindow[]).map(w => (
             <button key={w} onClick={() => onWindowChange(w)}
               className={`rounded-full px-3 py-0.5 text-xs font-medium transition-colors ${
@@ -236,41 +242,34 @@ function PicksToSubmit({ needsPick, window, onWindowChange, poolModel }: {
       </CardHeader>
       <CardContent className="space-y-3 pt-1">
         {needsPick.length === 0 ? (
-          <p className="text-xs text-zinc-400 py-2">All picks are locked for the selected window.</p>
+          <div className="flex items-center gap-2 py-3 text-sm text-zinc-400">
+            <CheckCircle className="h-4 w-4 text-emerald-400" />
+            All picks locked for this window.
+          </div>
         ) : needsPick.map(fix => {
           const home = teamMap[fix.home_team_id]
           const away = teamMap[fix.away_team_id]
-
-          // Use pool-leading model for the recommendation
           const preds = allPreds.filter(p => p.fixture_id === fix.id)
-          const poolPred = preds.find(p => p.model === poolModel) ?? preds[0]
 
-          const avail = preds.filter(p => ['A','B','C'].includes(p.model))
-          const disScore = avail.length >= 2
-            ? computeDisagreementScore(avail.map(p => ({ hw: p.home_win_prob, dw: p.draw_prob, aw: p.away_win_prob })))
-            : 0
-          const avgDw = avail.length > 0 ? avail.reduce((s, p) => s + p.draw_prob, 0) / avail.length : 0
-          const avgHw = avail.length > 0 ? avail.reduce((s, p) => s + p.home_win_prob, 0) / avail.length : 0
-          const avgAw = avail.length > 0 ? avail.reduce((s, p) => s + p.away_win_prob, 0) / avail.length : 0
+          // Engine recommendation (uses all three models)
+          const rec = buildRecommendation(preds)
 
-          let confLabel: string
-          let confStyle: string
-          if (disScore >= 0.12 || avgDw > 0.30) {
-            confLabel = 'Low — see High-Risk section'
-            confStyle = 'text-zinc-400'
-          } else if (Math.max(avgHw, avgAw) > 0.65 && disScore < 0.08) {
-            confLabel = 'High'
-            confStyle = 'text-green-600 font-semibold'
-          } else {
-            confLabel = 'Medium'
-            confStyle = 'text-amber-600 font-semibold'
-          }
+          // Tournament learning signals for this fixture's teams
+          const homeAdj = learningAdjs.find(a => a.teamId === fix.home_team_id)
+          const awayAdj = learningAdjs.find(a => a.teamId === fix.away_team_id)
+          const signals = [
+            ...(homeAdj && hasNotableSignal(homeAdj) ? [{ ...teamSignal(homeAdj), teamName: home?.name ?? homeAdj.teamName }] : []),
+            ...(awayAdj && hasNotableSignal(awayAdj) ? [{ ...teamSignal(awayAdj), teamName: away?.name ?? awayAdj.teamName }] : []),
+          ]
 
-          const rec = poolPred ? topScoreline(poolPred.home_goals, poolPred.away_goals) : null
+          const confStyle =
+            rec?.confidence === 'High'   ? 'text-emerald-600' :
+            rec?.confidence === 'Medium' ? 'text-amber-600' : 'text-zinc-400'
 
           return (
-            <div key={fix.id} className="rounded-lg border border-zinc-100 p-3">
-              <div className="flex items-start justify-between gap-2 mb-2.5">
+            <div key={fix.id} className="rounded-lg border border-zinc-100 bg-white p-3 space-y-2">
+              {/* Fixture header */}
+              <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-semibold text-zinc-900">
                     {home?.flag_url} {home?.code ?? fix.home_team_id}
@@ -281,15 +280,22 @@ function PicksToSubmit({ needsPick, window, onWindowChange, poolModel }: {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-3">
+              {/* Recommendation + CTA row */}
+              <div className="flex items-end justify-between gap-3">
                 <div>
-                  <p className="text-xs text-zinc-400">Recommended Pick</p>
+                  <p className="text-[10px] text-zinc-400 uppercase tracking-wide">Engine recommendation</p>
                   {rec ? (
-                    <p className="text-xl font-bold text-zinc-900 mt-0.5">{rec.h}–{rec.a}</p>
+                    <p className="text-2xl font-black text-zinc-900 tabular-nums leading-tight mt-0.5">
+                      {rec.scoreline.home}–{rec.scoreline.away}
+                    </p>
                   ) : (
-                    <p className="text-sm text-zinc-400">No prediction</p>
+                    <p className="text-sm text-zinc-300 mt-0.5">No prediction</p>
                   )}
-                  <p className={`text-xs mt-0.5 ${confStyle}`}>Confidence: {confLabel}</p>
+                  {rec && (
+                    <p className={`text-xs mt-0.5 font-medium ${confStyle}`}>
+                      {rec.confidence} confidence
+                    </p>
+                  )}
                 </div>
                 <Link
                   href={`/matches?fixture=${fix.id}&expand=true`}
@@ -298,6 +304,27 @@ function PicksToSubmit({ needsPick, window, onWindowChange, poolModel }: {
                   Review & Lock →
                 </Link>
               </div>
+
+              {/* Tournament context signals */}
+              {signals.length > 0 && (
+                <div className="border-t border-zinc-50 pt-2 space-y-0.5">
+                  {signals.map((s, i) => {
+                    const arrowCls =
+                      s.colour === 'emerald' ? 'text-emerald-600' :
+                      s.colour === 'red'     ? 'text-red-500' : 'text-amber-500'
+                    const textCls =
+                      s.colour === 'emerald' ? 'text-emerald-700' :
+                      s.colour === 'red'     ? 'text-red-600' : 'text-amber-600'
+                    return (
+                      <p key={i} className="text-[11px] flex items-center gap-1">
+                        <span className={`font-bold ${arrowCls}`}>{s.arrow}</span>
+                        <span className="text-zinc-500">{s.teamName}</span>
+                        <span className={textCls}>{s.headline.toLowerCase()}</span>
+                      </p>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )
         })}
@@ -306,67 +333,159 @@ function PicksToSubmit({ needsPick, window, onWindowChange, poolModel }: {
   )
 }
 
-// ── Section 3: High-Risk Opportunities ────────────────────────────────────────
+// ── Section 3: Pool Position ───────────────────────────────────────────────────
+// My Picks is the hero. Models are benchmarks.
 
-function HighRiskOpportunities({ needsPick }: { needsPick: SeedFixture[] }) {
-  const allPreds = getPredictions()
-  const teams    = getTeams()
-  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
+function PoolPosition({ poolRows }: { poolRows: ReturnType<typeof computePoolRows> }) {
+  const [showFull, setShowFull] = useState(false)
 
-  const risky = needsPick.flatMap(fix => {
-    const preds = allPreds.filter(p => p.fixture_id === fix.id && ['A','B','C'].includes(p.model))
-    if (preds.length < 2) return []
+  if (poolRows.every(r => r.pts === 0 && r.count === 0)) return null
 
-    const disScore = computeDisagreementScore(preds.map(p => ({ hw: p.home_win_prob, dw: p.draw_prob, aw: p.away_win_prob })))
-    const avgDw    = preds.reduce((s, p) => s + p.draw_prob, 0) / preds.length
+  const myRow     = poolRows.find(r => r.model === 'me')
+  const modelRows = poolRows.filter(r => r.model !== 'me').sort((a, b) => b.pts - a.pts)
+  const bestModel = modelRows[0]
+  const gap       = myRow && bestModel ? bestModel.pts - myRow.pts : null
 
-    if (disScore < 0.12 && avgDw <= 0.30) return []
-
-    const reason = disScore >= 0.12 && avgDw > 0.30
-      ? 'Models split on outcome and draw probability is elevated.'
-      : disScore >= 0.12
-      ? 'Models disagree materially on this fixture.'
-      : 'Draw probability is unusually high across all models.'
-
-    return [{ fix, preds, reason }]
-  })
-
-  if (risky.length === 0) return null
+  const myRank    = poolRows.findIndex(r => r.model === 'me') + 1
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
-          <AlertTriangle className="h-4 w-4 text-amber-500" /> High-Risk Opportunities ({risky.length})
+          <TrendingUp className="h-4 w-4 text-blue-500" /> Pool Position
         </CardTitle>
-        <p className="text-xs text-zinc-400 mt-0.5">These matches can create leaderboard separation — manual review recommended.</p>
+        <p className="text-[10px] text-zinc-400 mt-0.5">
+          Exact = 4 pts · Correct winner + GD = 2 pts · Correct winner = 1 pt
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* My picks — hero */}
+        {myRow ? (
+          <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-blue-600">My Picks</p>
+              <p className="text-2xl font-black text-zinc-900 tabular-nums leading-tight">{myRow.pts} pts</p>
+              {myRow.count > 0 && (
+                <p className="text-xs text-zinc-500">{myRow.avg.toFixed(2)}/match · {myRow.count} played</p>
+              )}
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-zinc-400">Rank</p>
+              <p className="text-2xl font-black text-zinc-900">#{myRank}</p>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Benchmark summary */}
+        {bestModel && (
+          <div className="rounded-md bg-zinc-50 border border-zinc-100 px-3 py-2.5 text-xs space-y-1">
+            <p className="font-semibold text-zinc-600">Benchmark</p>
+            <div className="flex items-center justify-between">
+              <span className="text-zinc-500">{bestModel.label} leads models</span>
+              <span className="font-semibold text-zinc-700">{bestModel.pts} pts</span>
+            </div>
+            {gap !== null && gap > 0 && (
+              <p className="text-red-500 font-medium">You are {gap} pt{gap !== 1 ? 's' : ''} behind</p>
+            )}
+            {gap !== null && gap <= 0 && (
+              <p className="text-emerald-600 font-medium">You are ahead of all benchmarks</p>
+            )}
+          </div>
+        )}
+
+        {/* Full leaderboard — collapsed */}
+        <button
+          onClick={() => setShowFull(v => !v)}
+          className="w-full text-left text-[11px] text-zinc-400 hover:text-zinc-600 transition-colors"
+        >
+          {showFull ? '▲ Hide' : '▶ Full leaderboard'}
+        </button>
+        {showFull && (
+          <div className="space-y-1.5">
+            {poolRows.map((row, i) => {
+              const isMe = row.model === 'me'
+              return (
+                <div key={row.label}
+                  className={`flex items-center justify-between rounded-md px-3 py-2 text-sm ${
+                    isMe ? 'bg-blue-50 border border-blue-100' : 'bg-zinc-50'
+                  }`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-400 w-4">#{i + 1}</span>
+                    <span className={`font-medium ${isMe ? 'text-blue-700' : 'text-zinc-700'}`}>{row.label}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-zinc-500">
+                    <span>{row.count}G</span>
+                    <span className="font-semibold text-zinc-700 tabular-nums w-10 text-right">{row.pts} pts</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Section 4: Uncertain Fixtures ─────────────────────────────────────────────
+// Fixtures where the engine has low confidence — shown without model labels
+
+function UncertainFixtures({ needsPick }: { needsPick: SeedFixture[] }) {
+  const allPreds = getPredictions()
+  const teams    = getTeams()
+  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
+
+  const uncertain = needsPick.flatMap(fix => {
+    const preds = allPreds.filter(p => p.fixture_id === fix.id && ['A', 'B', 'C'].includes(p.model))
+    if (preds.length < 2) return []
+    const disScore = computeDisagreementScore(preds.map(p => ({ hw: p.home_win_prob, dw: p.draw_prob, aw: p.away_win_prob })))
+    const avgDw    = preds.reduce((s, p) => s + p.draw_prob, 0) / preds.length
+    if (disScore < 0.12 && avgDw <= 0.30) return []
+
+    const rec     = buildRecommendation(preds)
+    const reason  = disScore >= 0.12 && avgDw > 0.30 ? 'Models split · draw likely'
+      : disScore >= 0.12 ? 'Models disagree on outcome'
+      : 'Draw probability elevated'
+
+    return [{ fix, rec, reason }]
+  })
+
+  if (uncertain.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+          <AlertTriangle className="h-4 w-4 text-amber-500" /> Uncertain Fixtures ({uncertain.length})
+        </CardTitle>
+        <p className="text-xs text-zinc-400 mt-0.5">
+          These matches carry higher variance — worth reviewing before locking.
+        </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        {risky.map(({ fix, preds, reason }) => {
+        {uncertain.map(({ fix, rec, reason }) => {
           const home = teamMap[fix.home_team_id]
           const away = teamMap[fix.away_team_id]
           return (
-            <div key={fix.id} className="space-y-2">
-              <div>
-                <p className="text-sm font-semibold text-zinc-900">
-                  {home?.flag_url} {home?.code} vs {away?.code} {away?.flag_url}
-                </p>
-                <p className="text-xs text-zinc-400">{berlinLabel(fix.kickoff_utc)}</p>
+            <div key={fix.id} className="space-y-1.5">
+              <p className="text-sm font-semibold text-zinc-900">
+                {home?.flag_url} {home?.code} vs {away?.code} {away?.flag_url}
+              </p>
+              <p className="text-xs text-zinc-400">{berlinLabel(fix.kickoff_utc)}</p>
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                {rec ? (
+                  <span className="rounded bg-zinc-100 px-2.5 py-1 font-semibold text-zinc-700">
+                    Engine: {rec.scoreline.home}–{rec.scoreline.away}
+                  </span>
+                ) : null}
+                <span className="rounded bg-amber-50 border border-amber-100 px-2.5 py-1 text-amber-700">
+                  {reason}
+                </span>
               </div>
-              <div className="flex gap-3 flex-wrap text-xs">
-                {(['A','B','C'] as const).map(m => {
-                  const pred = preds.find(p => p.model === m)
-                  if (!pred) return null
-                  const s = topScoreline(pred.home_goals, pred.away_goals)
-                  return (
-                    <span key={m} className="rounded bg-zinc-100 px-2 py-1 font-medium text-zinc-700">
-                      Model {m}: {s.h}–{s.a}
-                    </span>
-                  )
-                })}
-              </div>
-              <p className="text-xs text-zinc-500">{reason} Potential swing match.</p>
-              <Link href={`/matches?fixture=${fix.id}&expand=true`} className="inline-block text-xs text-blue-600 underline">
+              <Link
+                href={`/matches?fixture=${fix.id}&expand=true`}
+                className="inline-block text-xs text-blue-600 hover:underline"
+              >
                 Review manually →
               </Link>
             </div>
@@ -377,58 +496,7 @@ function HighRiskOpportunities({ needsPick }: { needsPick: SeedFixture[] }) {
   )
 }
 
-// ── Section 4: Pool Leaderboard ────────────────────────────────────────────────
-
-function PoolLeaderboard() {
-  const rows = computePoolRows()
-  if (rows.every(r => r.pts === 0 && r.count === 0)) return null
-
-  const leader  = rows[0]
-  const myRow   = rows.find(r => r.label === 'My Picks')
-  const gap     = myRow && myRow.label !== leader.label ? leader.pts - myRow.pts : null
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
-          <Trophy className="h-4 w-4 text-yellow-500" /> Pool Leaderboard
-        </CardTitle>
-        <p className="text-xs text-zinc-400 mt-0.5">Exact = 4 pts · Correct winner + goal diff = 2 pts · Correct winner = 1 pt</p>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {rows.map((row, i) => {
-          const isFirst = i === 0
-          const isMe    = row.label === 'My Picks'
-          return (
-            <div key={row.label}
-              className={`flex items-center justify-between rounded-md px-3 py-2 ${
-                isFirst ? 'bg-yellow-50 ring-1 ring-yellow-200' : isMe ? 'bg-blue-50' : 'bg-zinc-50'
-              }`}>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-bold ${isFirst ? 'text-yellow-600' : 'text-zinc-400'}`}>#{i + 1}</span>
-                <span className={`text-sm font-semibold ${isMe ? 'text-blue-700' : 'text-zinc-700'}`}>{row.label}</span>
-                {isFirst && <span className="text-xs bg-yellow-100 text-yellow-700 rounded px-1.5 py-0.5 font-medium">Leader</span>}
-              </div>
-              <div className="flex items-center gap-3 text-xs text-zinc-500">
-                <span>{row.count} matches</span>
-                <span className="font-semibold text-zinc-700">{row.pts} pts</span>
-                <span className="text-zinc-400">({row.avg.toFixed(2)}/match)</span>
-              </div>
-            </div>
-          )
-        })}
-        <div className="flex items-center justify-between pt-1 text-xs text-zinc-400">
-          <span>Best performer: <span className="font-medium text-zinc-600">{leader.label}</span></span>
-          {gap !== null && gap > 0 && (
-            <span>Gap to leader: <span className="font-medium text-zinc-600">{gap} pt{gap !== 1 ? 's' : ''}</span></span>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// ── Live Intelligence (collapsed) ─────────────────────────────────────────────
+// ── Section 5: Live Intelligence ──────────────────────────────────────────────
 
 function LiveIntelligencePanel() {
   const [open, setOpen]         = useState(false)
@@ -454,20 +522,39 @@ function LiveIntelligencePanel() {
     ? Object.entries(liveData.teamAdjustments).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
     : []
 
+  if (!liveData && injuries.length === 0) {
+    return (
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-sm font-medium text-zinc-500">Live Intelligence</CardTitle>
+          <button onClick={handleRefresh} disabled={loading}
+            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50">
+            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Fetching…' : 'Refresh'}
+          </button>
+        </CardHeader>
+        <CardContent className="pt-0 pb-3">
+          <p className="text-xs text-zinc-400">No live data — click Refresh to pull latest injury news.</p>
+          {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-1.5 text-sm">
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="flex items-center gap-1.5 text-sm font-medium text-zinc-700">
           Live Intelligence
           {injuries.length > 0 && (
-            <span className="px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 text-xs font-semibold ml-1">
+            <span className="rounded-full bg-red-100 text-red-600 text-[10px] font-bold px-1.5 py-0.5">
               {injuries.length}
             </span>
           )}
         </CardTitle>
         <div className="flex items-center gap-2">
           <button onClick={handleRefresh} disabled={loading}
-            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50">
+            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50">
             <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
             {loading ? 'Fetching…' : 'Refresh'}
           </button>
@@ -477,6 +564,7 @@ function LiveIntelligencePanel() {
         </div>
       </CardHeader>
 
+      {/* Preview: show top injury without expanding */}
       {!open && injuries.length > 0 && (
         <CardContent className="pt-0 pb-3 space-y-1">
           {injuries.slice(0, 2).map((item, i) => (
@@ -490,17 +578,15 @@ function LiveIntelligencePanel() {
 
       {open && (
         <CardContent className="pt-0 space-y-4">
-          {liveData ? (
+          {liveData && (
             <p className="text-xs text-zinc-400">
-              {adjustments.length} teams adjusted · last updated{' '}
+              {adjustments.length} team adjustment{adjustments.length !== 1 ? 's' : ''} · updated{' '}
               {new Date(liveData.fetchedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
             </p>
-          ) : (
-            <p className="text-xs text-zinc-400">No data — click Refresh to pull live ESPN data.</p>
           )}
           {injuries.length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-red-500 mb-1.5">⚠ Injury alerts</p>
+              <p className="text-xs font-semibold text-red-500 mb-1.5">Injury alerts</p>
               <div className="space-y-1">
                 {injuries.map((item, i) => (
                   <div key={i} className="flex items-start gap-1.5 text-xs bg-red-50 rounded px-2.5 py-1.5">
@@ -513,12 +599,12 @@ function LiveIntelligencePanel() {
           )}
           {adjustments.length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-zinc-500 mb-2">Team adjustments</p>
+              <p className="text-xs font-semibold text-zinc-500 mb-2">Live team adjustments</p>
               <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
                 {adjustments.map(([id, adj]) => (
                   <div key={id} className="flex items-center justify-between rounded bg-zinc-50 px-2.5 py-1.5">
                     <span className="text-xs text-zinc-700 font-medium truncate">{id.toUpperCase()}</span>
-                    <span className={`text-xs font-bold ml-2 shrink-0 ${adj > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                    <span className={`text-xs font-bold ml-2 shrink-0 ${adj > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                       {adj > 0 ? '+' : ''}{(adj * 100).toFixed(0)}%
                     </span>
                   </div>
@@ -537,9 +623,10 @@ function LiveIntelligencePanel() {
   )
 }
 
-// ── Root ───────────────────────────────────────────────────────────────────────
+// ── Pool recommendation snapshots ─────────────────────────────────────────────
+// Write-once snapshot per fixture using the engine recommendation.
 
-function generateRecommendationSnapshots(poolModel: 'A' | 'B' | 'C') {
+function generateRecommendationSnapshots() {
   const allFixtures  = getFixtures()
   const allPreds     = getPredictions()
   const results      = getResults()
@@ -552,22 +639,41 @@ function generateRecommendationSnapshots(poolModel: 'A' | 'B' | 'C') {
     .filter(f => !playedIds.has(f.id) && !lockedIds.has(f.id) && new Date(f.kickoff_utc) > now)
     .forEach(f => {
       if (getPoolRecommendation(f.id)) return  // immutable — never overwrite
-      const pred = allPreds.find(p => p.fixture_id === f.id && p.model === poolModel)
-      if (!pred) return
-      const sl = topScoreline(pred.home_goals, pred.away_goals)
+      const preds = allPreds.filter(p => p.fixture_id === f.id)
+      const rec   = buildRecommendation(preds)
+      if (!rec) {
+        // Fallback: mode scoreline from first available prediction
+        const pred = preds[0]
+        if (!pred) return
+        const sl = poissonModeScoreline(pred.home_goals, pred.away_goals)
+        savePoolRecommendation({
+          fixture_id: f.id,
+          recommended_home: sl.h,
+          recommended_away: sl.a,
+          recommended_model: (pred.model as 'A' | 'B' | 'C') ?? 'A',
+          recommendation_reason: 'WC26 Recommendation Engine',
+        })
+        return
+      }
+      const matchingModel = (['A', 'B', 'C'] as const).find(m => {
+        const sl = rec.modelScorelines[m]
+        return sl && sl.h === rec.scoreline.home && sl.a === rec.scoreline.away
+      }) ?? 'A'
       savePoolRecommendation({
         fixture_id: f.id,
-        recommended_home: sl.h,
-        recommended_away: sl.a,
-        recommended_model: poolModel,
-        recommendation_reason: `Model ${poolModel} leads pool scoring`,
+        recommended_home: rec.scoreline.home,
+        recommended_away: rec.scoreline.away,
+        recommended_model: matchingModel,
+        recommendation_reason: 'WC26 Recommendation Engine',
       })
     })
 }
 
+// ── Root ───────────────────────────────────────────────────────────────────────
+
 export function HomeDashboard() {
   const [mounted, setMounted] = useState(false)
-  const [window, setWindow]   = useState<BettingWindow>('24h')
+  const [pickWindow, setPickWindow] = useState<BettingWindow>('24h')
   useEffect(() => setMounted(true), [])
 
   if (!mounted) {
@@ -578,23 +684,27 @@ export function HomeDashboard() {
     )
   }
 
-  const needsPick  = filterFixtures(window)
-  const poolRows   = computePoolRows()
-  // Pool leader = highest pts among models only (not "My Picks")
-  const poolLeaderRow = poolRows.filter(r => r.label !== 'My Picks').sort((a, b) => b.pts - a.pts)[0] ?? null
-  const poolLeader = poolLeaderRow ? { label: poolLeaderRow.label, pts: poolLeaderRow.pts } : null
-  // Extract model letter for scoreline lookup ('A'|'B'|'C')
-  const poolModel  = (poolLeaderRow?.model ?? 'A') as 'A' | 'B' | 'C'
+  const needsPick    = filterFixtures(pickWindow)
+  const poolRows     = computePoolRows()
+  const allPreds     = getPredictions()
 
-  // Write immutable recommendation snapshots for all upcoming unlocked fixtures
-  generateRecommendationSnapshots(poolModel)
+  // Build tournament learning signals once for all teams
+  const learningAdjs = buildTeamAdjustments(getTeams(), getFixtures(), getResults(), allPreds)
+
+  // Write immutable recommendation snapshots for upcoming fixtures
+  generateRecommendationSnapshots()
 
   return (
     <div className="space-y-4">
-      <BettingSummary needsPick={needsPick} poolLeader={poolLeader} />
-      <PicksToSubmit needsPick={needsPick} window={window} onWindowChange={setWindow} poolModel={poolModel} />
-      <HighRiskOpportunities needsPick={needsPick} />
-      <PoolLeaderboard />
+      <ActionSummary needsPick={needsPick} poolRows={poolRows} />
+      <PicksToSubmit
+        needsPick={needsPick}
+        window={pickWindow}
+        onWindowChange={setPickWindow}
+        learningAdjs={learningAdjs}
+      />
+      <UncertainFixtures needsPick={needsPick} />
+      <PoolPosition poolRows={poolRows} />
       <LiveIntelligencePanel />
     </div>
   )
