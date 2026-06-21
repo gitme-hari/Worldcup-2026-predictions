@@ -183,6 +183,7 @@ function FinalRow({ fix, actualH, actualA, lockedH, lockedA, source }: {
           {lockedH !== undefined && lockedA !== undefined && (
             <p className="text-xs text-zinc-400">
               My pick: <span className="font-medium text-zinc-600">{lockedH}–{lockedA}</span>
+              {source === 'backfilled' && <span className="ml-1 rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-500">backfilled</span>}
               {ptsLabel && <span className={` ml-1.5 ${ptsColor}`}>· {ptsLabel}</span>}
             </p>
           )}

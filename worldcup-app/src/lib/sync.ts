@@ -17,7 +17,7 @@ export interface CloudLockedPred {
   draw_prob: number
   away_win_prob: number
   locked_at: string
-  pick_source?: 'raw' | 'calibrated' | 'custom' | 'pool_recommendation'
+  pick_source?: 'raw' | 'calibrated' | 'custom' | 'pool_recommendation' | 'backfilled'
 }
 
 export interface CloudHumanPred {
