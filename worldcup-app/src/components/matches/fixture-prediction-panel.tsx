@@ -6,6 +6,7 @@ import {
 import type { LockedPrediction } from '@/lib/store'
 import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
 import { CheckCircle, Edit3, Lock } from 'lucide-react'
+import { ScoreStepper } from '@/components/ui/score-stepper'
 
 interface Props {
   fixture: SeedFixture
@@ -184,26 +185,18 @@ export function FixturePredictionPanel({ fixture, home, away }: Props) {
       {/* Customise form */}
       {mode === 'customise' && (
         <div className="space-y-3">
-          <div className="flex items-end gap-3">
-            <div className="flex-1">
-              <label className="block text-xs text-zinc-500 mb-1">{home?.code ?? 'Home'} goals</label>
-              <input
-                type="number" min={0} max={20}
-                value={homeGoals}
-                onChange={e => setHomeGoals(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-center text-xl font-bold text-zinc-900 focus:border-blue-400 focus:outline-none"
-              />
-            </div>
-            <span className="text-zinc-300 text-xl pb-2">–</span>
-            <div className="flex-1">
-              <label className="block text-xs text-zinc-500 mb-1">{away?.code ?? 'Away'} goals</label>
-              <input
-                type="number" min={0} max={20}
-                value={awayGoals}
-                onChange={e => setAwayGoals(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-center text-xl font-bold text-zinc-900 focus:border-blue-400 focus:outline-none"
-              />
-            </div>
+          <div className="flex items-start gap-3">
+            <ScoreStepper
+              label={`${home?.code ?? 'Home'} goals`}
+              value={homeGoals}
+              onChange={setHomeGoals}
+            />
+            <div className="text-zinc-300 text-xl pt-7 shrink-0">–</div>
+            <ScoreStepper
+              label={`${away?.code ?? 'Away'} goals`}
+              value={awayGoals}
+              onChange={setAwayGoals}
+            />
           </div>
 
           <div>

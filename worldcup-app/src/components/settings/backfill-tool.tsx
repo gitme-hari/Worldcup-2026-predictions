@@ -7,6 +7,7 @@ import {
 import type { LockedPrediction } from '@/lib/store'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { ClipboardList, Check, AlertTriangle } from 'lucide-react'
+import { ScoreStepper } from '@/components/ui/score-stepper'
 
 interface BackfillRow {
   fixtureId: string
@@ -20,8 +21,8 @@ interface BackfillRow {
 }
 
 interface RowState {
-  homeGoals: string
-  awayGoals: string
+  homeGoals: number
+  awayGoals: number
   note: string
   saved: boolean
   error: string | null
@@ -29,7 +30,7 @@ interface RowState {
 }
 
 function defaultRowState(): RowState {
-  return { homeGoals: '', awayGoals: '', note: '', saved: false, error: null, confirmOverwrite: false }
+  return { homeGoals: 0, awayGoals: 0, note: '', saved: false, error: null, confirmOverwrite: false }
 }
 
 export function BackfillTool() {
@@ -88,13 +89,8 @@ export function BackfillTool() {
 
   function save(row: BackfillRow) {
     const state = getRow(row.fixtureId)
-    const h = parseInt(state.homeGoals)
-    const a = parseInt(state.awayGoals)
-
-    if (isNaN(h) || h < 0 || isNaN(a) || a < 0) {
-      setRow(row.fixtureId, { error: 'Enter valid non-negative integers for both goals.' })
-      return
-    }
+    const h = state.homeGoals
+    const a = state.awayGoals
 
     // Guard: warn if overwriting an existing lock
     const existing = getLockedPrediction(row.fixtureId)
@@ -189,29 +185,19 @@ export function BackfillTool() {
                     </div>
                   </div>
 
-                  {/* Score inputs */}
-                  <div className="flex items-end gap-2">
-                    <div className="flex-1">
-                      <label className="block text-xs text-zinc-500 mb-1">{row.homeCode} goals</label>
-                      <input
-                        type="number" min={0} max={20}
-                        value={state.homeGoals}
-                        onChange={e => setRow(row.fixtureId, { homeGoals: e.target.value, error: null })}
-                        placeholder="0"
-                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-center text-lg font-bold text-zinc-900 focus:border-blue-400 focus:outline-none"
-                      />
-                    </div>
-                    <span className="text-zinc-300 text-xl pb-2">–</span>
-                    <div className="flex-1">
-                      <label className="block text-xs text-zinc-500 mb-1">{row.awayCode} goals</label>
-                      <input
-                        type="number" min={0} max={20}
-                        value={state.awayGoals}
-                        onChange={e => setRow(row.fixtureId, { awayGoals: e.target.value, error: null })}
-                        placeholder="0"
-                        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-center text-lg font-bold text-zinc-900 focus:border-blue-400 focus:outline-none"
-                      />
-                    </div>
+                  {/* Score steppers */}
+                  <div className="flex items-start gap-3">
+                    <ScoreStepper
+                      label={`${row.homeCode} goals`}
+                      value={state.homeGoals}
+                      onChange={v => setRow(row.fixtureId, { homeGoals: v, error: null })}
+                    />
+                    <div className="text-zinc-300 text-xl pt-7 shrink-0">–</div>
+                    <ScoreStepper
+                      label={`${row.awayCode} goals`}
+                      value={state.awayGoals}
+                      onChange={v => setRow(row.fixtureId, { awayGoals: v, error: null })}
+                    />
                   </div>
 
                   {/* Optional note */}
