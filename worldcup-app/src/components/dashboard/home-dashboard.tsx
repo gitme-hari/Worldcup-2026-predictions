@@ -6,7 +6,7 @@ import {
   computeMetrics, fetchLiveData, getLiveData,
 } from '@/lib/store'
 import type { ComputedMetrics } from '@/lib/store'
-import type { SeedPrediction } from '@/lib/seed-data'
+import type { SeedPrediction, SeedFixture } from '@/lib/seed-data'
 import { computeDisagreementScore } from '@/lib/analytics'
 import { MODEL_COLORS } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -210,32 +210,19 @@ function ModelRecommendationCard() {
 type BettingWindow = '24h' | '36h' | 'all'
 const WINDOW_LABELS: Record<BettingWindow, string> = { '24h': 'Next 24h', '36h': 'Next 36h', all: 'All Unlocked' }
 
-function MatchPicksAndAssistant() {
-  const [window, setWindow] = useState<BettingWindow>('24h')
+interface MatchPicksProps {
+  needsPick: SeedFixture[]
+  window: BettingWindow
+  onWindowChange: (w: BettingWindow) => void
+}
 
-  const fixtures    = getFixtures()
-  const teams       = getTeams()
+function MatchPicksAndAssistant({ needsPick, window, onWindowChange }: MatchPicksProps) {
   const allPreds    = getPredictions()
-  const results     = getResults()
-  const lockedPreds = getLockedPredictions()
+  const teams       = getTeams()
   const metrics     = computeMetrics()
   const teamMap     = Object.fromEntries(teams.map(t => [t.id, t]))
-  const playedIds   = new Set(results.map(r => r.fixture_id))
-  const lockedIds   = new Set(lockedPreds.map(p => p.fixture_id))
-  const now         = new Date()
-  const cutoff      = window === '24h' ? new Date(now.getTime() + 24 * 3600_000)
-    : window === '36h' ? new Date(now.getTime() + 36 * 3600_000) : null
-
   const bestByBrier = [...metrics].filter(m => m.total > 0)
     .sort((a, b) => a.avgBrier - b.avgBrier)[0]
-
-  const needsPick = fixtures.filter(f => {
-    if (playedIds.has(f.id) || lockedIds.has(f.id)) return false
-    const kick = new Date(f.kickoff_utc)
-    if (kick <= now) return false
-    if (cutoff && kick > cutoff) return false
-    return true
-  }).sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
 
   return (
     <Card>
@@ -245,7 +232,7 @@ function MatchPicksAndAssistant() {
         </CardTitle>
         <div className="flex gap-1.5 mt-2 flex-wrap">
           {(['24h', '36h', 'all'] as BettingWindow[]).map(w => (
-            <button key={w} onClick={() => setWindow(w)}
+            <button key={w} onClick={() => onWindowChange(w)}
               className={`rounded-full px-3 py-0.5 text-xs font-medium transition-colors ${
                 window === w ? 'bg-zinc-800 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
               }`}>
@@ -328,26 +315,13 @@ function MatchPicksAndAssistant() {
 
 // ── Section 4: Scoreline Advisor ───────────────────────────────────────────────
 
-function ScorelineAdvisor() {
-  const fixtures    = getFixtures()
-  const teams       = getTeams()
-  const allPreds    = getPredictions()
-  const results     = getResults()
-  const lockedPreds = getLockedPredictions()
-  const metrics     = computeMetrics()
-  const teamMap     = Object.fromEntries(teams.map(t => [t.id, t]))
-  const playedIds   = new Set(results.map(r => r.fixture_id))
-  const lockedIds   = new Set(lockedPreds.map(p => p.fixture_id))
-  const now         = new Date()
-  const cutoff      = new Date(now.getTime() + 36 * 3600_000)
-  const bestModel   = [...metrics].filter(m => m.total > 0)
+function ScorelineAdvisor({ fixtures: upcoming, windowLabel }: { fixtures: SeedFixture[]; windowLabel: string }) {
+  const teams     = getTeams()
+  const allPreds  = getPredictions()
+  const metrics   = computeMetrics()
+  const teamMap   = Object.fromEntries(teams.map(t => [t.id, t]))
+  const bestModel = [...metrics].filter(m => m.total > 0)
     .sort((a, b) => a.avgBrier - b.avgBrier)[0]?.model ?? 'A'
-
-  const upcoming = fixtures.filter(f => {
-    if (playedIds.has(f.id) || lockedIds.has(f.id)) return false
-    const kick = new Date(f.kickoff_utc)
-    return kick > now && kick <= cutoff
-  }).sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
 
   if (upcoming.length === 0) return null
 
@@ -357,7 +331,7 @@ function ScorelineAdvisor() {
         <CardTitle className="flex items-center gap-1.5 text-sm">
           <Trophy className="h-3.5 w-3.5 text-amber-500" /> Scoreline Advisor
         </CardTitle>
-        <p className="text-xs text-zinc-400 mt-0.5">Top-3 most likely exact scores · unlocked fixtures in the next 36h</p>
+        <p className="text-xs text-zinc-400 mt-0.5">Top-3 most likely exact scores · {windowLabel}</p>
       </CardHeader>
       <CardContent className="space-y-5">
         {upcoming.map(fix => {
@@ -599,8 +573,10 @@ function LiveIntelligencePanel() {
 // ── Root ───────────────────────────────────────────────────────────────────────
 
 export function HomeDashboard() {
-  const [mounted, setMounted] = useState(false)
+  const [mounted, setMounted]   = useState(false)
+  const [window, setWindow]     = useState<BettingWindow>('24h')
   useEffect(() => setMounted(true), [])
+
   if (!mounted) {
     return (
       <div className="space-y-3 animate-pulse">
@@ -608,11 +584,33 @@ export function HomeDashboard() {
       </div>
     )
   }
+
+  // Single source of truth for the filtered fixture list
+  const fixtures    = getFixtures()
+  const results     = getResults()
+  const lockedPreds = getLockedPredictions()
+  const playedIds   = new Set(results.map(r => r.fixture_id))
+  const lockedIds   = new Set(lockedPreds.map(p => p.fixture_id))
+  const now         = new Date()
+  const cutoff      = window === '24h' ? new Date(now.getTime() + 24 * 3600_000)
+    : window === '36h' ? new Date(now.getTime() + 36 * 3600_000) : null
+
+  const needsPick = fixtures.filter(f => {
+    if (playedIds.has(f.id) || lockedIds.has(f.id)) return false
+    const kick = new Date(f.kickoff_utc)
+    if (kick <= now) return false
+    if (cutoff && kick > cutoff) return false
+    return true
+  }).sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
+
+  const windowLabel = window === '24h' ? 'next 24h'
+    : window === '36h' ? 'next 36h' : 'all unlocked fixtures'
+
   return (
     <div className="space-y-4">
       <ModelRecommendationCard />
-      <MatchPicksAndAssistant />
-      <ScorelineAdvisor />
+      <MatchPicksAndAssistant needsPick={needsPick} window={window} onWindowChange={setWindow} />
+      <ScorelineAdvisor fixtures={needsPick} windowLabel={windowLabel} />
       <PoolLeaderboard />
       <LiveIntelligencePanel />
     </div>
