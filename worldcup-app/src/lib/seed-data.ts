@@ -145,14 +145,14 @@ export const SEED_FIXTURES: SeedFixture[] = [
   { id:'group-I-m1', home_team_id:'fra', away_team_id:'sen', group:'I', stage:'group', matchday:1, kickoff_utc:'2026-06-16T18:00:00Z', venue:'New Jersey' },
   { id:'group-I-m2', home_team_id:'irq', away_team_id:'nor', group:'I', stage:'group', matchday:1, kickoff_utc:'2026-06-16T21:00:00Z', venue:'Boston' },
   { id:'group-I-m3', home_team_id:'fra', away_team_id:'irq', group:'I', stage:'group', matchday:2, kickoff_utc:'2026-06-22T20:00:00Z', venue:'Philadelphia' },
-  { id:'group-I-m4', home_team_id:'nor', away_team_id:'sen', group:'I', stage:'group', matchday:2, kickoff_utc:'2026-06-21T23:00:00Z', venue:'New Jersey' },
+  { id:'group-I-m4', home_team_id:'nor', away_team_id:'sen', group:'I', stage:'group', matchday:2, kickoff_utc:'2026-06-23T00:00:00Z', venue:'New Jersey' },
   { id:'group-I-m5', home_team_id:'nor', away_team_id:'fra', group:'I', stage:'group', matchday:3, kickoff_utc:'2026-06-26T18:00:00Z', venue:'Boston' },
   { id:'group-I-m6', home_team_id:'sen', away_team_id:'irq', group:'I', stage:'group', matchday:3, kickoff_utc:'2026-06-26T18:00:00Z', venue:'Toronto' },
   // Group J
   { id:'group-J-m1', home_team_id:'arg', away_team_id:'alg', group:'J', stage:'group', matchday:1, kickoff_utc:'2026-06-17T00:00:00Z', venue:'Kansas City' },
   { id:'group-J-m2', home_team_id:'aut', away_team_id:'jor', group:'J', stage:'group', matchday:1, kickoff_utc:'2026-06-17T03:00:00Z', venue:'San Francisco Bay Area' },
   { id:'group-J-m3', home_team_id:'arg', away_team_id:'aut', group:'J', stage:'group', matchday:2, kickoff_utc:'2026-06-22T16:00:00Z', venue:'Dallas' },
-  { id:'group-J-m4', home_team_id:'jor', away_team_id:'alg', group:'J', stage:'group', matchday:2, kickoff_utc:'2026-06-22T02:00:00Z', venue:'San Francisco Bay Area' },
+  { id:'group-J-m4', home_team_id:'jor', away_team_id:'alg', group:'J', stage:'group', matchday:2, kickoff_utc:'2026-06-22T03:00:00Z', venue:'San Francisco Bay Area' },
   { id:'group-J-m5', home_team_id:'alg', away_team_id:'aut', group:'J', stage:'group', matchday:3, kickoff_utc:'2026-06-28T01:00:00Z', venue:'Kansas City' },
   { id:'group-J-m6', home_team_id:'jor', away_team_id:'arg', group:'J', stage:'group', matchday:3, kickoff_utc:'2026-06-28T01:00:00Z', venue:'Dallas' },
   // Group K
