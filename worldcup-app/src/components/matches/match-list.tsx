@@ -1,11 +1,10 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import {
-  getFixtures, getTeams, getPredictions, getResults,
-  getLockedPredictions, getPoolRecommendation, getConfig,
+  getFixtures, getTeams, getResults,
+  getLockedPredictions, getConfig,
 } from '@/lib/store'
 import type { LockedPrediction } from '@/lib/store'
-import { computeHybrid } from '@/lib/models'
 import { formatDate } from '@/lib/utils'
 import type { SeedFixture } from '@/lib/seed-data'
 import { Badge } from '@/components/ui/badge'
@@ -14,14 +13,6 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { FixturePredictionPanel } from './fixture-prediction-panel'
-
-const MODELS = [
-  { value: 'active', label: 'Active Model' },
-  { value: 'A', label: 'Model A' },
-  { value: 'B', label: 'Model B' },
-  { value: 'C', label: 'Model C' },
-  { value: 'hybrid', label: 'Hybrid' },
-]
 
 function poissonProb(lambda: number, k: number): number {
   let p = Math.exp(-lambda)
@@ -49,52 +40,42 @@ function poolScore(predH: number, predA: number, actH: number, actA: number): nu
   return 0
 }
 
-// ── Shared chips ─────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function SourceChip({ source }: { source?: string }) {
-  if (source === 'pool_recommendation')
-    return <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">Pool pick</span>
-  if (source === 'custom')
-    return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Custom</span>
-  if (source === 'backfilled')
-    return <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">Backfilled</span>
-  return <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">Model pick</span>
+function sourceLabel(src?: string, model?: string): string {
+  const mdl = model ? ` · Mdl ${model}` : ''
+  if (src === 'pool_recommendation') return `Pool Pick${mdl}`
+  if (src === 'custom')              return `Custom${mdl}`
+  if (src === 'backfilled')         return 'Backfilled'
+  return `Model Pick${mdl}`
 }
 
-function PtsChip({ pts }: { pts: number }) {
-  const map: Record<number, { label: string; cls: string }> = {
-    4: { label: '4 pts · Exact!',    cls: 'bg-green-100 text-green-700' },
-    2: { label: '2 pts · Winner+GD', cls: 'bg-blue-100 text-blue-700'   },
-    1: { label: '1 pt · Winner',     cls: 'bg-zinc-100 text-zinc-600'   },
-    0: { label: '0 pts · Miss',      cls: 'bg-red-100 text-red-600'     },
-  }
-  const c = map[pts] ?? map[0]
-  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${c.cls}`}>{c.label}</span>
-}
+// ── Completed match card (no accordion — always shows result strip) ────────────
 
-// ── Row header (always visible) ───────────────────────────────────────────────
-
-function RowHeader({ fix, home, away, isExpanded, onToggle, state }: {
+function FinalCard({ fix, home, away, actualH, actualA, locked }: {
   fix: SeedFixture
   home: { name: string; flag_url?: string | null } | undefined
   away: { name: string; flag_url?: string | null } | undefined
-  isExpanded: boolean
-  onToggle: () => void
-  state: 'needs-pick' | 'locked' | 'final'
+  actualH: number
+  actualA: number
+  locked?: LockedPrediction
 }) {
-  const stateBadge =
-    state === 'final'      ? <Badge variant="success">Final</Badge>
-    : state === 'locked'   ? <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">✓ Locked</span>
-    : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Needs Pick</span>
+  const rH  = locked ? Math.round(locked.home_goals) : null
+  const rA  = locked ? Math.round(locked.away_goals) : null
+  const pts = (rH !== null && rA !== null) ? poolScore(rH, rA, actualH, actualA) : null
+  const isDecimal = locked && (locked.home_goals !== rH || locked.away_goals !== rA)
+
+  const ptsConfig: Record<number, { label: string; cls: string }> = {
+    4: { label: '4 pts ✓ Exact',      cls: 'text-green-700 bg-green-50' },
+    2: { label: '2 pts ✓ Winner+GD',  cls: 'text-blue-700 bg-blue-50'   },
+    1: { label: '1 pt ✓ Winner',      cls: 'text-amber-700 bg-amber-50' },
+    0: { label: '0 pts ✗ Missed',     cls: 'text-red-700 bg-red-50'     },
+  }
 
   return (
-    <button
-      onClick={onToggle}
-      className="w-full text-left"
-      aria-expanded={isExpanded}
-    >
-      <div className="flex items-center gap-2 px-3 py-2.5">
-        {/* Teams */}
+    <div className="px-3 py-2.5">
+      {/* Teams row */}
+      <div className="flex items-center gap-2 mb-1.5">
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <span className="text-base leading-none">{home?.flag_url}</span>
           <span className="text-sm font-semibold text-zinc-900 truncate">{home?.name}</span>
@@ -104,75 +85,104 @@ function RowHeader({ fix, home, away, isExpanded, onToggle, state }: {
           <span className="text-sm font-semibold text-zinc-900 truncate">{away?.name}</span>
           <span className="text-base leading-none">{away?.flag_url}</span>
         </div>
-        {/* State badge */}
+        <Badge variant="success" className="shrink-0 ml-1">Final</Badge>
+      </div>
+
+      {/* Meta row */}
+      <div className="flex items-center gap-1.5 mb-2.5 text-[10px] text-zinc-400">
+        {fix.group && <span className="rounded border border-zinc-100 px-1 py-0.5">Grp {fix.group}</span>}
+        {fix.matchday && <span>MD{fix.matchday}</span>}
+        <span>{formatDate(fix.kickoff_utc)}</span>
+      </div>
+
+      {/* Result strip */}
+      {locked && rH !== null && rA !== null && pts !== null ? (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2 border-t border-zinc-100 pt-2.5">
+          {/* Actual */}
+          <div>
+            <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">Actual</p>
+            <p className="text-lg font-black text-green-700 tabular-nums leading-none">{actualH}–{actualA}</p>
+          </div>
+          {/* My Pick */}
+          <div>
+            <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">My Pick</p>
+            <p className="text-lg font-bold text-blue-700 tabular-nums leading-none">{rH}–{rA}</p>
+            {isDecimal && (
+              <p className="text-[9px] text-zinc-400 mt-0.5">{locked.home_goals.toFixed(1)}–{locked.away_goals.toFixed(1)} xG</p>
+            )}
+          </div>
+          {/* Points */}
+          <div>
+            <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">Points</p>
+            <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${ptsConfig[pts]?.cls ?? ptsConfig[0].cls}`}>
+              {ptsConfig[pts]?.label ?? ptsConfig[0].label}
+            </span>
+          </div>
+          {/* Source */}
+          <div>
+            <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">Source</p>
+            <p className="text-[10px] font-medium text-zinc-600 leading-tight">{sourceLabel(locked.pick_source, locked.model)}</p>
+          </div>
+        </div>
+      ) : (
+        /* No pick recorded */
+        <div className="flex items-center gap-3 border-t border-zinc-100 pt-2.5">
+          <div>
+            <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">Actual</p>
+            <p className="text-lg font-black text-green-700 tabular-nums leading-none">{actualH}–{actualA}</p>
+          </div>
+          <div className="flex-1">
+            <span className="inline-block rounded bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700">
+              No pick recorded · backfill in Settings → Recovery
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Upcoming/locked row header (accordion trigger) ────────────────────────────
+
+function RowHeader({ fix, home, away, isExpanded, onToggle, state }: {
+  fix: SeedFixture
+  home: { name: string; flag_url?: string | null } | undefined
+  away: { name: string; flag_url?: string | null } | undefined
+  isExpanded: boolean
+  onToggle: () => void
+  state: 'needs-pick' | 'locked'
+}) {
+  const stateBadge = state === 'locked'
+    ? <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">✓ Locked</span>
+    : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Needs Pick</span>
+
+  return (
+    <button
+      onClick={onToggle}
+      className="w-full text-left"
+      aria-expanded={isExpanded}
+    >
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          <span className="text-base leading-none">{home?.flag_url}</span>
+          <span className="text-sm font-semibold text-zinc-900 truncate">{home?.name}</span>
+        </div>
+        <span className="text-[10px] text-zinc-300 shrink-0">vs</span>
+        <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
+          <span className="text-sm font-semibold text-zinc-900 truncate">{away?.name}</span>
+          <span className="text-base leading-none">{away?.flag_url}</span>
+        </div>
         <div className="shrink-0 ml-1">{stateBadge}</div>
-        {/* Expand chevron */}
         <div className="shrink-0 text-zinc-400 ml-1">
           {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </div>
       </div>
-
-      {/* Meta row */}
       <div className="flex items-center gap-1.5 px-3 pb-2 text-[10px] text-zinc-400">
         {fix.group && <span className="rounded border border-zinc-100 px-1 py-0.5">Grp {fix.group}</span>}
         {fix.matchday && <span>MD{fix.matchday}</span>}
         <span>{formatDate(fix.kickoff_utc)}</span>
       </div>
     </button>
-  )
-}
-
-// ── Expanded body for completed (played) matches ──────────────────────────────
-
-function FinalBody({ actualH, actualA, locked }: {
-  actualH: number; actualA: number; locked?: LockedPrediction
-}) {
-  if (!locked) {
-    return (
-      <div className="border-t border-zinc-100 px-4 py-3 flex items-center gap-3 bg-amber-50">
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-0.5">Actual</p>
-          <p className="text-2xl font-black text-zinc-900 tabular-nums">{actualH}–{actualA}</p>
-        </div>
-        <p className="text-xs text-amber-700 font-semibold">No pick recorded · use Recovery tab in Settings to backfill</p>
-      </div>
-    )
-  }
-
-  const rH  = Math.round(locked.home_goals)
-  const rA  = Math.round(locked.away_goals)
-  const pts = poolScore(rH, rA, actualH, actualA)
-  const isDecimal = locked.home_goals !== rH || locked.away_goals !== rA
-
-  return (
-    <div className="border-t border-zinc-100 px-4 py-3 bg-white">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-0.5">Actual</p>
-          <p className="text-2xl font-black text-zinc-900 tabular-nums leading-none">{actualH}–{actualA}</p>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-0.5">My Pick</p>
-          <p className="text-xl font-bold text-zinc-800 tabular-nums leading-none">{rH}–{rA}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-1">
-            <SourceChip source={locked.pick_source} />
-            {locked.model && <span className="text-[10px] text-zinc-400">Mdl {locked.model}</span>}
-          </div>
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">Points</p>
-          <PtsChip pts={pts} />
-        </div>
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-0.5">Model</p>
-          {isDecimal
-            ? <p className="text-[10px] text-zinc-500">Model value: {locked.home_goals.toFixed(1)}–{locked.away_goals.toFixed(1)}</p>
-            : locked.pool_rec_home !== undefined && locked.home_goals !== locked.pool_rec_home
-            ? <p className="text-[10px] text-zinc-400">Pool rec: {locked.pool_rec_home}–{locked.pool_rec_away}</p>
-            : <p className="text-[10px] text-zinc-300">—</p>}
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -183,11 +193,10 @@ interface MatchListProps {
 }
 
 export function MatchList({ focusFixtureId }: MatchListProps = {}) {
-  const [mounted, setMounted]         = useState(false)
-  const [group, setGroup]             = useState('All')
-  const [modelFilter, setModelFilter] = useState('active')
-  const [matchday, setMatchday]       = useState('all')
-  const [search, setSearch]           = useState('')
+  const [mounted, setMounted] = useState(false)
+  const [group, setGroup]     = useState('All')
+  const [matchday, setMatchday] = useState('all')
+  const [search, setSearch]   = useState('')
   const [expandedId, setExpandedId]   = useState<string | null>(focusFixtureId ?? null)
   const focusRef = useRef<HTMLDivElement>(null)
 
@@ -210,15 +219,11 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
 
   const fixtures    = getFixtures()
   const teams       = getTeams()
-  const predictions = getPredictions()
   const results     = getResults()
   const lockedPreds = getLockedPredictions()
-  const config      = getConfig()
   const teamMap     = Object.fromEntries(teams.map(t => [t.id, t]))
   const resultMap   = Object.fromEntries(results.map(r => [r.fixture_id, r]))
   const lockedMap   = Object.fromEntries(lockedPreds.map(p => [p.fixture_id, p]))
-
-  const displayModel = modelFilter === 'active' ? config.active_model : modelFilter
 
   let filtered = fixtures as SeedFixture[]
   if (group !== 'All') filtered = filtered.filter(f => f.group === group)
@@ -233,8 +238,6 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
   }
   filtered = filtered.sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
 
-  const now = new Date()
-
   function toggle(id: string) {
     setExpandedId(prev => prev === id ? null : id)
   }
@@ -242,7 +245,7 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
   return (
     <div className="space-y-3">
       {/* Filters */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <Select
           options={['All', ...'ABCDEFGHIJKL'.split('')].map(g => ({ value: g, label: g === 'All' ? 'All Groups' : `Group ${g}` }))}
           value={group}
@@ -254,12 +257,6 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
           value={matchday}
           onChange={e => setMatchday(e.target.value)}
           label="Matchday"
-        />
-        <Select
-          options={MODELS}
-          value={modelFilter}
-          onChange={e => setModelFilter(e.target.value)}
-          label="Model"
         />
         <Input
           label="Search team"
@@ -282,33 +279,44 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
           const isExpanded = expandedId === f.id
           const isFocused  = f.id === focusFixtureId
 
-          const rowState: 'final' | 'locked' | 'needs-pick' =
-            isPlayed ? 'final' : isLocked ? 'locked' : 'needs-pick'
+          const rowState: 'locked' | 'needs-pick' =
+            isLocked ? 'locked' : 'needs-pick'
 
           return (
             <div
               key={f.id}
               ref={isFocused ? focusRef : undefined}
             >
-              <Card className={`overflow-hidden transition-colors ${
-                isExpanded ? 'border-blue-300 ring-1 ring-blue-100' : ''
-              } ${isFocused && !isExpanded ? 'border-blue-200' : ''}`}>
-                <RowHeader
-                  fix={f}
-                  home={home}
-                  away={away}
-                  isExpanded={isExpanded}
-                  onToggle={() => toggle(f.id)}
-                  state={rowState}
-                />
-
-                {/* Accordion body */}
-                {isExpanded && (
-                  isPlayed
-                    ? <FinalBody actualH={result.home_goals} actualA={result.away_goals} locked={locked ?? undefined} />
-                    : <FixturePredictionPanel fixture={f} home={home} away={away} />
-                )}
-              </Card>
+              {isPlayed ? (
+                /* Completed: static strip, no accordion */
+                <Card className={`overflow-hidden ${isFocused ? 'border-blue-200' : ''}`}>
+                  <FinalCard
+                    fix={f}
+                    home={home}
+                    away={away}
+                    actualH={result.home_goals}
+                    actualA={result.away_goals}
+                    locked={locked ?? undefined}
+                  />
+                </Card>
+              ) : (
+                /* Upcoming / locked: accordion */
+                <Card className={`overflow-hidden transition-colors ${
+                  isExpanded ? 'border-blue-300 ring-1 ring-blue-100' : ''
+                } ${isFocused && !isExpanded ? 'border-blue-200' : ''}`}>
+                  <RowHeader
+                    fix={f}
+                    home={home}
+                    away={away}
+                    isExpanded={isExpanded}
+                    onToggle={() => toggle(f.id)}
+                    state={rowState}
+                  />
+                  {isExpanded && (
+                    <FixturePredictionPanel fixture={f} home={home} away={away} />
+                  )}
+                </Card>
+              )}
             </div>
           )
         })}
