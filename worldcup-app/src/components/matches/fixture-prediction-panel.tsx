@@ -49,7 +49,7 @@ export function FixturePredictionPanel({ fixture, home, away }: Props) {
       home_win_prob:  recPred?.home_win_prob ?? 0,
       draw_prob:      recPred?.draw_prob ?? 0,
       away_win_prob:  recPred?.away_win_prob ?? 0,
-      pick_source:    'custom',
+      pick_source:    'pool_recommendation',
       override_reason: 'Suggested pool pick based on pool-scoring optimisation.',
       pool_rec_home:  poolRec.recommended_home,
       pool_rec_away:  poolRec.recommended_away,
