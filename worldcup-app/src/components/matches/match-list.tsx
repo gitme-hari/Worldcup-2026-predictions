@@ -198,6 +198,7 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
   const [matchday, setMatchday] = useState('all')
   const [search, setSearch]   = useState('')
   const [expandedId, setExpandedId]   = useState<string | null>(focusFixtureId ?? null)
+  const [savedResults, setSavedResults] = useState<Record<string, { home_goals: number; away_goals: number }>>({})
   const focusRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => setMounted(true), [])
@@ -270,12 +271,14 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
 
       <div className="space-y-1.5">
         {filtered.map(f => {
-          const home       = teamMap[f.home_team_id]
-          const away       = teamMap[f.away_team_id]
-          const result     = resultMap[f.id]
-          const locked     = lockedMap[f.id]
-          const isPlayed   = !!result
-          const isLocked   = !!locked && !isPlayed
+          const home           = teamMap[f.home_team_id]
+          const away           = teamMap[f.away_team_id]
+          const storedResult   = resultMap[f.id]
+          const inlineResult   = savedResults[f.id]
+          const result         = storedResult ?? (inlineResult ? { ...inlineResult, fixture_id: f.id } : undefined)
+          const locked         = lockedMap[f.id]
+          const isPlayed       = !!result
+          const isLocked       = !!locked && !isPlayed
           const isExpanded = expandedId === f.id
           const isFocused  = f.id === focusFixtureId
 
@@ -313,7 +316,15 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
                     state={rowState}
                   />
                   {isExpanded && (
-                    <FixturePredictionPanel fixture={f} home={home} away={away} />
+                    <FixturePredictionPanel
+                      fixture={f}
+                      home={home}
+                      away={away}
+                      onResultSaved={(h, a) => {
+                        setSavedResults(prev => ({ ...prev, [f.id]: { home_goals: h, away_goals: a } }))
+                        setExpandedId(null)
+                      }}
+                    />
                   )}
                 </Card>
               )}
