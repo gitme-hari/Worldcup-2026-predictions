@@ -2,10 +2,11 @@
 import { useState } from 'react'
 import {
   getLockedPrediction, saveLockPrediction, getPoolRecommendation, getPredictions,
+  saveResult,
 } from '@/lib/store'
 import type { LockedPrediction } from '@/lib/store'
 import type { SeedFixture, SeedTeam, SeedPrediction } from '@/lib/seed-data'
-import { CheckCircle, ChevronDown, ChevronUp, Lock, Edit3 } from 'lucide-react'
+import { CheckCircle, ChevronDown, ChevronUp, Lock, Edit3, Flag } from 'lucide-react'
 import { ScoreStepper } from '@/components/ui/score-stepper'
 import { MODEL_TEXT_COLORS } from '@/lib/utils'
 
@@ -13,6 +14,7 @@ interface Props {
   fixture: SeedFixture
   home: SeedTeam | undefined
   away: SeedTeam | undefined
+  onResultSaved?: (homeGoals: number, awayGoals: number) => void
 }
 
 type Mode = 'idle' | 'customise'
@@ -50,7 +52,43 @@ function sourceLabel(src?: string) {
   return 'Model pick'
 }
 
-export function FixturePredictionPanel({ fixture, home, away }: Props) {
+// ── Inline result entry form ──────────────────────────────────────────────────
+
+function ResultEntryForm({ homeCode, awayCode, onSave, onCancel }: {
+  homeCode: string
+  awayCode: string
+  onSave: (h: number, a: number) => void
+  onCancel: () => void
+}) {
+  const [h, setH] = useState(0)
+  const [a, setA] = useState(0)
+  return (
+    <div className="rounded-md border border-zinc-200 bg-white px-3 py-3 space-y-3">
+      <p className="text-xs font-semibold text-zinc-600">Enter Final Result</p>
+      <div className="flex items-start gap-3">
+        <ScoreStepper label={`${homeCode} goals`} value={h} onChange={setH} />
+        <div className="text-zinc-300 text-xl pt-7 shrink-0">–</div>
+        <ScoreStepper label={`${awayCode} goals`} value={a} onChange={setA} />
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onSave(h, a)}
+          className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-700 transition-colors"
+        >
+          <Flag className="h-3.5 w-3.5" /> Save Result
+        </button>
+        <button
+          onClick={onCancel}
+          className="rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-50 transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: Props) {
   const poolRec    = getPoolRecommendation(fixture.id)
   const existingLP = getLockedPrediction(fixture.id)
   const allPreds   = getPredictions().filter(p => p.fixture_id === fixture.id)
@@ -58,13 +96,14 @@ export function FixturePredictionPanel({ fixture, home, away }: Props) {
     MODELS.map(m => [m, allPreds.find(p => p.model === m)])
   )
 
-  const [locked, setLocked]         = useState<LockedPrediction | undefined>(existingLP)
-  const [mode, setMode]             = useState<Mode>('idle')
-  const [homeGoals, setHomeGoals]   = useState(poolRec?.recommended_home ?? 0)
-  const [awayGoals, setAwayGoals]   = useState(poolRec?.recommended_away ?? 0)
-  const [reason, setReason]         = useState('')
-  const [reasonError, setReasonError] = useState(false)
-  const [showModels, setShowModels] = useState(false)
+  const [locked, setLocked]             = useState<LockedPrediction | undefined>(existingLP)
+  const [mode, setMode]                 = useState<Mode>('idle')
+  const [homeGoals, setHomeGoals]       = useState(poolRec?.recommended_home ?? 0)
+  const [awayGoals, setAwayGoals]       = useState(poolRec?.recommended_away ?? 0)
+  const [reason, setReason]             = useState('')
+  const [reasonError, setReasonError]   = useState(false)
+  const [showModels, setShowModels]     = useState(false)
+  const [enteringResult, setEnteringResult] = useState(false)
 
   function lockPick(pick: Omit<LockedPrediction, 'locked_at'>) {
     saveLockPrediction(pick)
@@ -128,6 +167,12 @@ export function FixturePredictionPanel({ fixture, home, away }: Props) {
     })
   }
 
+  function handleSaveResult(h: number, a: number) {
+    saveResult({ fixture_id: fixture.id, home_goals: h, away_goals: a })
+    setEnteringResult(false)
+    onResultSaved?.(h, a)
+  }
+
   // ── Locked state ──────────────────────────────────────────────────────────
   if (locked && mode === 'idle') {
     const rH = Math.round(locked.home_goals)
@@ -149,6 +194,7 @@ export function FixturePredictionPanel({ fixture, home, away }: Props) {
               setAwayGoals(rA)
               setReason(locked.override_reason ?? '')
               setMode('customise')
+              setEnteringResult(false)
             }}
             className="shrink-0 flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors"
           >
@@ -160,6 +206,22 @@ export function FixturePredictionPanel({ fixture, home, away }: Props) {
         )}
         {locked.override_reason && locked.pick_source === 'custom' && (
           <p className="text-xs text-zinc-400 italic">"{locked.override_reason}"</p>
+        )}
+
+        {!enteringResult ? (
+          <button
+            onClick={() => setEnteringResult(true)}
+            className="w-full flex items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors"
+          >
+            <Flag className="h-3.5 w-3.5 text-zinc-400" /> Enter Final Result
+          </button>
+        ) : (
+          <ResultEntryForm
+            homeCode={home?.code ?? 'Home'}
+            awayCode={away?.code ?? 'Away'}
+            onSave={handleSaveResult}
+            onCancel={() => setEnteringResult(false)}
+          />
         )}
       </div>
     )
@@ -209,7 +271,7 @@ export function FixturePredictionPanel({ fixture, home, away }: Props) {
               <button
                 key={m}
                 onClick={() => useModel(m)}
-                className={`w-full flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors`}
+                className="w-full flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors"
               >
                 <span className="flex items-center gap-1.5">
                   <Lock className="h-3.5 w-3.5 text-zinc-400" />
@@ -223,11 +285,27 @@ export function FixturePredictionPanel({ fixture, home, away }: Props) {
             )
           })}
           <button
-            onClick={() => setMode('customise')}
+            onClick={() => { setMode('customise'); setEnteringResult(false) }}
             className="w-full flex items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors"
           >
             <Edit3 className="h-3.5 w-3.5" /> Customise
           </button>
+
+          {!enteringResult ? (
+            <button
+              onClick={() => setEnteringResult(true)}
+              className="w-full flex items-center justify-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-500 hover:bg-zinc-50 transition-colors"
+            >
+              <Flag className="h-3.5 w-3.5" /> Enter Final Result
+            </button>
+          ) : (
+            <ResultEntryForm
+              homeCode={home?.code ?? 'Home'}
+              awayCode={away?.code ?? 'Away'}
+              onSave={handleSaveResult}
+              onCancel={() => setEnteringResult(false)}
+            />
+          )}
         </div>
       )}
 
