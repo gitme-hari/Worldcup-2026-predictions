@@ -81,6 +81,8 @@ export interface SeedFixture {
   matchday: number
   kickoff_utc: string
   venue: string
+  stadium?: string      // full stadium name, e.g. "MetLife Stadium"
+  altitude_m?: number   // metres above sea level; omit = unknown
 }
 
 // Official FIFA 2026 group stage schedule — 72 fixtures, verified from FIFA schedule

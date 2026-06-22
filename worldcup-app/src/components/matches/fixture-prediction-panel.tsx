@@ -16,6 +16,7 @@ import { CheckCircle, ChevronDown, ChevronUp, Lock, Edit3, Flag, Sparkles, Alert
 import { ScoreStepper } from '@/components/ui/score-stepper'
 import { MODEL_TEXT_COLORS } from '@/lib/utils'
 import { SquadAdjustmentEditor } from './squad-adjustment-editor'
+import { LiveMatchContext } from './live-match-context'
 
 interface Props {
   fixture: SeedFixture
@@ -405,14 +406,22 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
           />
         )}
 
-        {/* Squad notes always visible even when locked */}
-        <SquadAdjustmentEditor
-          fixtureId={fixture.id}
-          home={home}
-          away={away}
-          adjustments={squadAdjs}
-          onChange={() => setAdjTick(t => t + 1)}
-        />
+        <LiveMatchContext fixture={fixture} home={home} away={away} />
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-zinc-400 hover:text-zinc-600 transition-colors select-none">
+            <span className="transition-transform group-open:rotate-90">▶</span>
+            Advanced manual adjustment
+          </summary>
+          <div className="mt-2">
+            <SquadAdjustmentEditor
+              fixtureId={fixture.id}
+              home={home}
+              away={away}
+              adjustments={squadAdjs}
+              onChange={() => setAdjTick(t => t + 1)}
+            />
+          </div>
+        </details>
       </div>
     )
   }
@@ -574,14 +583,22 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
         )}
       </div>
 
-      {/* Squad Notes */}
-      <SquadAdjustmentEditor
-        fixtureId={fixture.id}
-        home={home}
-        away={away}
-        adjustments={squadAdjs}
-        onChange={() => setAdjTick(t => t + 1)}
-      />
+      <LiveMatchContext fixture={fixture} home={home} away={away} />
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-zinc-400 hover:text-zinc-600 transition-colors select-none">
+          <span className="transition-transform group-open:rotate-90">▶</span>
+          Advanced manual adjustment
+        </summary>
+        <div className="mt-2">
+          <SquadAdjustmentEditor
+            fixtureId={fixture.id}
+            home={home}
+            away={away}
+            adjustments={squadAdjs}
+            onChange={() => setAdjTick(t => t + 1)}
+          />
+        </div>
+      </details>
     </div>
   )
 }
