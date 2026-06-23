@@ -1,5 +1,6 @@
 import type { MatchContext, FormEntry } from './match-context'
 import type { SeedTeam } from './seed-data'
+import type { GroupStanding, QualificationStatus } from './team-stats'
 
 export type ImpactLevel = 'Low' | 'Medium' | 'High'
 
@@ -67,6 +68,79 @@ export function buildContextInsights(
 
   if (ctx.home_lineup_status === 'confirmed' && ctx.away_lineup_status === 'confirmed') {
     out.push({ text: 'Both starting XIs confirmed', type: 'positive' })
+  }
+
+  return out
+}
+
+export interface TeamTournamentContext {
+  standing: GroupStanding | undefined
+  qualStatus: QualificationStatus
+}
+
+// Produces 2–3 actionable bullets from tournament standings + optional API context.
+// Always returns something useful when a team has played ≥1 match.
+export function buildTournamentInsights(
+  home: SeedTeam | undefined,
+  away: SeedTeam | undefined,
+  homeCtx: TeamTournamentContext,
+  awayCtx: TeamTournamentContext,
+  apiCtx: MatchContext | undefined,
+): ContextInsight[] {
+  const out: ContextInsight[] = []
+
+  for (const { team, ctx } of [
+    { team: home, ctx: homeCtx },
+    { team: away, ctx: awayCtx },
+  ]) {
+    const code = team?.code ?? '?'
+    const s = ctx.standing
+    if (!s || s.played === 0) continue
+
+    const avgGf = (s.gf / s.played).toFixed(1)
+    const avgGa = (s.ga / s.played).toFixed(1)
+
+    // Scoring form
+    if (s.gf >= 3 && s.played >= 1)
+      out.push({ text: `${code} scored ${s.gf} in ${s.played} match${s.played > 1 ? 'es' : ''} (${avgGf} avg)`, type: 'positive' })
+    else if (s.gf === 0 && s.played >= 1)
+      out.push({ text: `${code} yet to score in ${s.played} match${s.played > 1 ? 'es' : ''}`, type: 'warning' })
+    else if (s.played >= 2)
+      out.push({ text: `${code} scored ${s.gf} in ${s.played} matches (${avgGf} avg)`, type: 'info' })
+
+    // Defensive record — only highlight if notably good or bad
+    if (s.ga === 0 && s.played >= 1)
+      out.push({ text: `${code} kept ${s.played === 1 ? 'a' : s.played} clean sheet${s.played > 1 ? 's' : ''} — defence solid`, type: 'positive' })
+    else if (s.ga >= 4 && s.played <= 2)
+      out.push({ text: `${code} conceded ${s.ga} in ${s.played} match${s.played > 1 ? 'es' : ''} — defensive concern`, type: 'warning' })
+    else if (s.played >= 2)
+      out.push({ text: `${code} conceded ${s.ga} (${avgGa} avg)`, type: 'info' })
+
+    // Qualification pressure
+    if (ctx.qualStatus === 'must_win')
+      out.push({ text: `${code} must win to stay alive`, type: 'warning' })
+    else if (ctx.qualStatus === 'must_not_lose')
+      out.push({ text: `${code} needs at least a draw to qualify`, type: 'warning' })
+    else if (ctx.qualStatus === 'rotation_risk')
+      out.push({ text: `${code} likely to rotate — already qualified`, type: 'info' })
+    else if (ctx.qualStatus === 'eliminated')
+      out.push({ text: `${code} eliminated — reduced motivation`, type: 'warning' })
+  }
+
+  // Mutual pressure note
+  if (homeCtx.qualStatus === 'must_win' && awayCtx.qualStatus === 'must_win')
+    out.push({ text: 'Both teams must win — expect an open, high-intensity match', type: 'info' })
+
+  // Absences / suspensions from API context if available
+  if (apiCtx) {
+    for (const { code, abs, susp } of [
+      { code: home?.code ?? 'Home', abs: apiCtx.home_absences, susp: apiCtx.home_suspensions ?? [] },
+      { code: away?.code ?? 'Away', abs: apiCtx.away_absences, susp: apiCtx.away_suspensions ?? [] },
+    ]) {
+      if (abs.length === 1)    out.push({ text: `${code} missing ${abs[0]}`, type: 'info' })
+      else if (abs.length >= 2) out.push({ text: `${code} missing ${abs.length} starters`, type: 'warning' })
+      if (susp.length > 0)     out.push({ text: `${code} ${susp.length === 1 ? '1 player' : `${susp.length} players`} suspended`, type: 'warning' })
+    }
   }
 
   return out
