@@ -1,4 +1,3 @@
-import { ResultsEntry } from '@/components/results/results-entry'
 import { MatchList } from './match-list'
 
 interface Props {
@@ -10,7 +9,6 @@ export function MatchesCombined({ focusFixtureId }: Props) {
     <div className="space-y-4">
       <h1 className="text-lg font-bold text-zinc-900">Matches & Results</h1>
       <MatchList focusFixtureId={focusFixtureId} />
-      <ResultsEntry />
     </div>
   )
 }
