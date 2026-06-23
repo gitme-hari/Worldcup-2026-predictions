@@ -25,7 +25,7 @@ interface Props {
   onResultSaved?: (homeGoals: number, awayGoals: number) => void
 }
 
-type Mode = 'idle' | 'customise'
+type Mode = 'idle' | 'review' | 'customise'
 const MODELS = ['A', 'B', 'C'] as const
 
 function poissonProb(lambda: number, k: number): number {
@@ -382,9 +382,10 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
           </div>
           <button
             onClick={() => {
-              setHomeGoals(rH); setAwayGoals(rA)
-              setReason(locked.override_reason ?? '')
-              setMode('idle'); setEnteringResult(false)
+              setHomeGoals(rec?.scoreline.home ?? rH)
+              setAwayGoals(rec?.scoreline.away ?? rA)
+              setReason('')
+              setMode('review'); setEnteringResult(false)
             }}
             className="shrink-0 flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors"
           >
@@ -454,8 +455,8 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
       {/* Tournament learning context */}
       <TournamentContext signals={learningSignals} />
 
-      {/* Action buttons: idle mode */}
-      {mode === 'idle' && (
+      {/* Action buttons: idle / review mode */}
+      {(mode === 'idle' || mode === 'review') && (
         <div className="flex flex-col gap-2">
           {(() => {
             const poolH = poolRec?.recommended_home
@@ -532,6 +533,15 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
               onCancel={() => setEnteringResult(false)}
             />
           )}
+
+          {locked && mode === 'review' && (
+            <button
+              onClick={() => { setMode('idle'); setEnteringResult(false) }}
+              className="w-full text-center text-xs text-zinc-400 hover:text-zinc-600 py-1 transition-colors"
+            >
+              ← Keep current pick
+            </button>
+          )}
         </div>
       )}
 
@@ -566,7 +576,7 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
               <Lock className="h-3.5 w-3.5" /> Lock Pick
             </button>
             <button
-              onClick={() => { setMode('idle'); setReasonError(false) }}
+              onClick={() => { setMode(locked ? 'review' : 'idle'); setReasonError(false) }}
               className="rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-50 transition-colors"
             >
               Cancel
