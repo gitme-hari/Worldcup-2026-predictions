@@ -333,6 +333,13 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
   }
 
   function lockCustom() {
+    const matchesPool = poolRec && homeGoals === poolRec.recommended_home && awayGoals === poolRec.recommended_away
+    const matchesRec  = rec && homeGoals === rec.scoreline.home && awayGoals === rec.scoreline.away
+
+    // Score matches a recommendation — save it as such, no reason needed
+    if (matchesPool) { usePoolRec(); return }
+    if (matchesRec)  { useEngineRec(); return }
+
     if (!reason.trim()) { setReasonError(true); return }
     const refPred = rawPreds[0]
     lockPick({
@@ -377,7 +384,7 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
             onClick={() => {
               setHomeGoals(rH); setAwayGoals(rA)
               setReason(locked.override_reason ?? '')
-              setMode('customise'); setEnteringResult(false)
+              setMode('idle'); setEnteringResult(false)
             }}
             className="shrink-0 flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors"
           >
@@ -450,40 +457,58 @@ export function FixturePredictionPanel({ fixture, home, away, onResultSaved }: P
       {/* Action buttons: idle mode */}
       {mode === 'idle' && (
         <div className="flex flex-col gap-2">
-          {poolRec && (
-            <div>
-              <p className="text-[9px] uppercase tracking-widest text-blue-500 mb-1 px-0.5">
-                Pool Rec · Mdl {poolRec.recommended_model}
-              </p>
-              <button
-                onClick={usePoolRec}
-                className="w-full flex items-center justify-between gap-2 rounded-md bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 transition-colors"
-              >
-                <span className="flex items-center gap-1.5">
-                  <Lock className="h-3.5 w-3.5" />
-                  Use Pool Recommendation
-                </span>
-                <span className="tabular-nums">{poolRec.recommended_home}–{poolRec.recommended_away}</span>
-              </button>
-            </div>
-          )}
+          {(() => {
+            const poolH = poolRec?.recommended_home
+            const poolA = poolRec?.recommended_away
+            const recH  = rec?.scoreline.home
+            const recA  = rec?.scoreline.away
+            const scoresMatch = poolRec && rec && poolH === recH && poolA === recA
 
-          {rec && (
-            <button
-              onClick={useEngineRec}
-              className={`w-full flex items-center justify-between gap-2 rounded-md px-3 py-2.5 text-sm font-semibold transition-colors ${
-                poolRec
-                  ? 'border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50'
-                  : 'bg-zinc-900 text-white hover:bg-zinc-700'
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5" />
-                Use Recommendation
-              </span>
-              <span className="tabular-nums">{rec.scoreline.home}–{rec.scoreline.away}</span>
-            </button>
-          )}
+            if (scoresMatch) {
+              // Single unified button — pool snapshot and engine agree
+              return (
+                <button
+                  onClick={usePoolRec}
+                  className="w-full flex items-center justify-between gap-2 rounded-md bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 transition-colors"
+                >
+                  <span className="flex items-center gap-1.5"><Lock className="h-3.5 w-3.5" /> Use Recommendation</span>
+                  <span className="tabular-nums">{recH}–{recA}</span>
+                </button>
+              )
+            }
+
+            return (
+              <>
+                {poolRec && (
+                  <button
+                    onClick={usePoolRec}
+                    className="w-full flex items-center justify-between gap-2 rounded-md bg-zinc-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 transition-colors"
+                  >
+                    <span className="flex items-center gap-1.5"><Lock className="h-3.5 w-3.5" /> Use Stored Pool Pick</span>
+                    <span className="tabular-nums">{poolH}–{poolA}</span>
+                  </button>
+                )}
+                {rec && (
+                  <button
+                    onClick={useEngineRec}
+                    className={`w-full flex items-center justify-between gap-2 rounded-md px-3 py-2.5 text-sm font-semibold transition-colors ${
+                      poolRec
+                        ? 'border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50'
+                        : 'bg-zinc-900 text-white hover:bg-zinc-700'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5" /> Use Current Engine Recommendation</span>
+                    <span className="tabular-nums">{recH}–{recA}</span>
+                  </button>
+                )}
+                {poolRec && rec && (
+                  <p className="text-[10px] text-zinc-400 px-0.5">
+                    Stored pool pick was generated when you first reviewed this match. Current engine recommendation includes latest context.
+                  </p>
+                )}
+              </>
+            )
+          })()}
 
           <button
             onClick={() => { setMode('customise'); setEnteringResult(false) }}
