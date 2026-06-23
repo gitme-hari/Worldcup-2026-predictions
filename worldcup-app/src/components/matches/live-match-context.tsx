@@ -1,11 +1,12 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Zap, RefreshCw, Plus, ChevronDown, ChevronUp, AlertCircle, Users } from 'lucide-react'
 import {
   type MatchContext, type ImpactSignal, type LineupStatus,
   getMatchContext, saveMatchContext, clearMatchContext,
   IMPACT_LABELS, formSummary, emptyContext,
 } from '@/lib/match-context'
+import { computeImpactLevel, shouldAutoRefresh } from '@/lib/context-insights'
 import type { FixtureIntelligenceResponse } from '@/app/api/fixture-intelligence/route'
 import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
 
@@ -190,6 +191,7 @@ export function LiveMatchContext({ fixture, home, away }: {
   const [expanded,  setExpanded]  = useState(false)
   const [loading,   setLoading]   = useState(false)
   const [apiError,  setApiError]  = useState<string | null>(null)
+  const autoRefreshed              = useRef(false)
 
   async function handleRefresh() {
     setLoading(true)
@@ -211,6 +213,15 @@ export function LiveMatchContext({ fixture, home, away }: {
     }
   }
 
+  // Auto-refresh: fire once on mount when fixture is within 48h and context is stale
+  useEffect(() => {
+    if (autoRefreshed.current) return
+    if (!shouldAutoRefresh(ctx, fixture.kickoff_utc)) return
+    autoRefreshed.current = true
+    handleRefresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── Empty state ─────────────────────────────────────────────────────────────
   if (!ctx && !editMode) {
     return (
@@ -220,7 +231,12 @@ export function LiveMatchContext({ fixture, home, away }: {
             <p className="text-xs font-semibold text-zinc-600 flex items-center gap-1.5">
               <Zap className="h-3.5 w-3.5 text-zinc-400" /> Live Match Context
             </p>
-            <p className="text-[10px] text-zinc-400 mt-0.5">No data loaded yet</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5">
+              {loading ? 'Loading from API…'
+                : shouldAutoRefresh(undefined, fixture.kickoff_utc) ? 'No context yet — auto-refresh queued'
+                : new Date(fixture.kickoff_utc).getTime() < Date.now() ? 'No context available'
+                : 'No data loaded yet'}
+            </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <button
@@ -288,6 +304,11 @@ export function LiveMatchContext({ fixture, home, away }: {
             {ctx!.impact_signal !== 'none' && (
               <Pill cls={SIGNAL_CLS[ctx!.impact_signal]} label={IMPACT_LABELS[ctx!.impact_signal]} />
             )}
+            {(() => {
+              const { level } = computeImpactLevel(ctx!)
+              if (level === 'Low') return null
+              return <Pill cls={level === 'High' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'} label={`${level} impact`} />
+            })()}
             {hasAbsences && (
               <Pill cls="bg-red-50 text-red-600" label={`${ctx!.home_absences.length + ctx!.away_absences.length} absent`} />
             )}
@@ -329,7 +350,10 @@ export function LiveMatchContext({ fixture, home, away }: {
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span>{team?.flag_url}</span>
                   <span className="text-[10px] font-semibold text-zinc-600">{team?.code ?? side}</span>
-                  <Pill cls={LINEUP_CLS[status]} label={LINEUP_LABEL[status]} />
+                  <Pill
+                    cls={LINEUP_CLS[status]}
+                    label={status === 'unknown' && ctx!.source === 'api-football' ? 'No lineup yet' : LINEUP_LABEL[status]}
+                  />
                 </div>
                 {absences.length > 0
                   ? absences.map((a, i) => (
@@ -337,7 +361,9 @@ export function LiveMatchContext({ fixture, home, away }: {
                         <span className="text-red-400">✗</span> {a}
                       </p>
                     ))
-                  : <p className="text-[10px] text-zinc-400">No injuries reported</p>
+                  : ctx!.source === 'api-football'
+                    ? <p className="text-[10px] text-zinc-400">No injuries reported by API</p>
+                    : <p className="text-[10px] text-zinc-400">None entered</p>
                 }
                 {(suspensions?.length ?? 0) > 0 && suspensions!.map((s, i) => (
                   <p key={i} className="text-[10px] text-amber-600 flex items-center gap-1">
