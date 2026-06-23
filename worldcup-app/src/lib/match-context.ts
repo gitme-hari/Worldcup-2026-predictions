@@ -28,6 +28,18 @@ export interface MatchContext {
   home_absences: string[]
   away_absences: string[]
 
+  // Confirmed starting XI (populated from /fixtures/lineups when available)
+  home_startXI?: string[]
+  away_startXI?: string[]
+  home_formation?: string   // e.g. "4-3-3"
+  away_formation?: string
+  home_coach?: string
+  away_coach?: string
+
+  // Suspensions tracked separately from injuries
+  home_suspensions?: string[]
+  away_suspensions?: string[]
+
   // Recent form (last 5, reverse chronological)
   home_form: FormEntry[]
   away_form: FormEntry[]
@@ -35,6 +47,7 @@ export interface MatchContext {
   // Venue
   venue_name?: string
   venue_city?: string
+  venue_capacity?: number
   venue_indoor?: boolean
   venue_altitude_m?: number
 
