@@ -10,7 +10,8 @@ import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
 import { buildRecommendation } from '@/lib/recommendation-engine'
 import { buildTeamAdjustments, teamSignal, hasNotableSignal } from '@/lib/learning-layer'
 import { getMatchContext } from '@/lib/match-context'
-import { buildContextInsights, computeImpactLevel, type ContextInsight } from '@/lib/context-insights'
+import { buildTournamentInsights, computeImpactLevel, type ContextInsight } from '@/lib/context-insights'
+import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
 import { computeDisagreementScore } from '@/lib/analytics'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { AlertCircle, AlertTriangle, CheckCircle, ClipboardList, RefreshCw, TrendingUp, Trophy } from 'lucide-react'
@@ -212,30 +213,50 @@ function ActionSummary({ needsPick, poolRows }: {
   )
 }
 
-// ── Context signals (from API-Football MatchContext) ──────────────────────────
+// ── Context signals (tournament stats + optional API context) ─────────────────
 
-function ContextSignals({ fixtureId, home, away }: {
-  fixtureId: string
+function ContextSignals({ fixture, home, away }: {
+  fixture: SeedFixture
   home: SeedTeam | undefined
   away: SeedTeam | undefined
 }) {
-  const ctx = getMatchContext(fixtureId)
-  const insights = ctx ? buildContextInsights(ctx, home, away) : []
-  const visible = insights.filter(i => i.type !== 'info').slice(0, 3)
+  const fixtures = getFixtures()
+  const results  = getResults()
+  const allStandings = computeGroupStandings(fixtures, results)
+  const groupStandings = allStandings[fixture.group] ?? []
+
+  const homeStanding = groupStandings.find(s => s.teamId === fixture.home_team_id)
+  const awayStanding = groupStandings.find(s => s.teamId === fixture.away_team_id)
+  const matchday = fixture.matchday ?? 1
+
+  const homeQual = computeQualificationStatus(fixture.home_team_id, groupStandings, matchday)
+  const awayQual = computeQualificationStatus(fixture.away_team_id, groupStandings, matchday)
+
+  const ctx = getMatchContext(fixture.id)
+
+  const insights = buildTournamentInsights(
+    home, away,
+    { standing: homeStanding, qualStatus: homeQual },
+    { standing: awayStanding, qualStatus: awayQual },
+    ctx,
+  )
+
+  // Show non-info first, then fill with info up to 3 total
+  const prioritised = [
+    ...insights.filter(i => i.type !== 'info'),
+    ...insights.filter(i => i.type === 'info'),
+  ].slice(0, 3)
 
   const iconFor = (type: ContextInsight['type']) =>
     type === 'positive' ? '✓' : type === 'warning' ? '⚠' : '·'
   const clsFor = (type: ContextInsight['type']) =>
     type === 'positive' ? 'text-emerald-600' : type === 'warning' ? 'text-amber-600' : 'text-zinc-500'
 
+  if (prioritised.length === 0) return null
+
   return (
     <div className="border-t border-zinc-50 pt-2 space-y-0.5">
-      <p className="text-[10px] text-zinc-400 uppercase tracking-wide mb-1">Context affecting recommendation</p>
-      {visible.length === 0 ? (
-        <p className="text-[11px] text-zinc-400">
-          {ctx ? 'No notable context detected' : 'No API context loaded — open fixture to refresh'}
-        </p>
-      ) : visible.map((ins, i) => (
+      {prioritised.map((ins, i) => (
         <p key={i} className={`text-[11px] flex items-center gap-1 ${clsFor(ins.type)}`}>
           <span className="shrink-0">{iconFor(ins.type)}</span> {ins.text}
         </p>
@@ -297,19 +318,29 @@ function RecommendationInputs({ rec, fixtureId, learningAdjs, homeId, awayId, ho
 // ── Upcoming intelligence ─────────────────────────────────────────────────────
 
 function UpcomingIntelligence() {
-  const fixtures = getFixtures()
-  const teams    = getTeams()
-  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
-  const now      = Date.now()
-  const horizon  = now + 7 * 24 * 3_600_000
+  const fixtures     = getFixtures()
+  const results      = getResults()
+  const teams        = getTeams()
+  const teamMap      = Object.fromEntries(teams.map(t => [t.id, t]))
+  const allStandings = computeGroupStandings(fixtures, results)
+  const now          = Date.now()
+  const horizon      = now + 7 * 24 * 3_600_000
 
   const items: Array<{ text: string; type: ContextInsight['type'] }> = []
   for (const fix of fixtures) {
     const kickoff = new Date(fix.kickoff_utc).getTime()
     if (kickoff <= now || kickoff > horizon) continue
+    const groupStandings = allStandings[fix.group] ?? []
+    const matchday = fix.matchday ?? 1
+    const homeQual = computeQualificationStatus(fix.home_team_id, groupStandings, matchday)
+    const awayQual = computeQualificationStatus(fix.away_team_id, groupStandings, matchday)
     const ctx = getMatchContext(fix.id)
-    if (!ctx || ctx.source !== 'api-football') continue
-    const insights = buildContextInsights(ctx, teamMap[fix.home_team_id], teamMap[fix.away_team_id])
+    const insights = buildTournamentInsights(
+      teamMap[fix.home_team_id], teamMap[fix.away_team_id],
+      { standing: groupStandings.find(s => s.teamId === fix.home_team_id), qualStatus: homeQual },
+      { standing: groupStandings.find(s => s.teamId === fix.away_team_id), qualStatus: awayQual },
+      ctx,
+    )
     for (const ins of insights) {
       if (ins.type !== 'info') items.push(ins)
     }
@@ -453,8 +484,8 @@ function PicksToSubmit({ needsPick, window, onWindowChange, learningAdjs }: {
                 </div>
               )}
 
-              {/* API context insights */}
-              <ContextSignals fixtureId={fix.id} home={home} away={away} />
+              {/* Tournament + API context signals */}
+              <ContextSignals fixture={fix} home={home} away={away} />
 
               {/* Intelligence audit — collapsible */}
               <RecommendationInputs

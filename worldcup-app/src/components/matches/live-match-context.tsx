@@ -7,8 +7,88 @@ import {
   IMPACT_LABELS, formSummary, emptyContext,
 } from '@/lib/match-context'
 import { computeImpactLevel, shouldAutoRefresh } from '@/lib/context-insights'
+import {
+  computeGroupStandings, deriveInTournamentForm, computeQualificationStatus,
+  QUAL_STATUS_LABEL, QUAL_STATUS_CLS,
+} from '@/lib/team-stats'
+import { getFixtures, getResults } from '@/lib/store'
 import type { FixtureIntelligenceResponse } from '@/app/api/fixture-intelligence/route'
 import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
+
+// ── Tournament stats (derived from local results) ─────────────────────────────
+
+function TournamentStats({ fixture, home, away }: {
+  fixture: SeedFixture
+  home: SeedTeam | undefined
+  away: SeedTeam | undefined
+}) {
+  const fixtures = getFixtures()
+  const results  = getResults()
+  const allStandings = computeGroupStandings(fixtures, results)
+  const groupStandings = allStandings[fixture.group] ?? []
+
+  const sides = [
+    { team: home, id: fixture.home_team_id },
+    { team: away, id: fixture.away_team_id },
+  ]
+
+  const hasAnyPlayed = groupStandings.some(s => s.played > 0)
+  if (!hasAnyPlayed) return null
+
+  return (
+    <div className="pt-3 space-y-2">
+      <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wide">Group {fixture.group} · Tournament Stats</p>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+        {sides.map(({ team, id }) => {
+          const s = groupStandings.find(gs => gs.teamId === id)
+          const qualStatus = s
+            ? computeQualificationStatus(id, groupStandings, fixture.matchday ?? 1)
+            : 'unknown'
+          const form = deriveInTournamentForm(id, fixtures, results)
+
+          if (!s || s.played === 0) {
+            return (
+              <div key={id}>
+                <p className="text-[10px] font-semibold text-zinc-600 mb-1">{team?.flag_url} {team?.code ?? id}</p>
+                <p className="text-[10px] text-zinc-400">No matches played yet</p>
+              </div>
+            )
+          }
+
+          const avgGf = (s.gf / s.played).toFixed(1)
+          const avgGa = (s.ga / s.played).toFixed(1)
+          const qualLabel = QUAL_STATUS_LABEL[qualStatus]
+          const qualCls   = QUAL_STATUS_CLS[qualStatus]
+
+          return (
+            <div key={id} className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold text-zinc-600">{team?.flag_url} {team?.code ?? id}</span>
+                <span className="text-[9px] text-zinc-400">#{s.position}</span>
+              </div>
+              <p className="text-[10px] text-zinc-500 tabular-nums">
+                P{s.played} · {s.pts}pts · {s.gd > 0 ? '+' : ''}{s.gd} GD
+              </p>
+              <p className="text-[10px] text-zinc-400">
+                GF {s.gf} ({avgGf}/gm) · GA {s.ga} ({avgGa}/gm)
+              </p>
+              {form.length > 0 && (
+                <p className="text-[10px] font-mono tracking-widest text-zinc-600">
+                  {form.map(e => e.result).join(' ')}
+                </p>
+              )}
+              {qualLabel && (
+                <span className={`inline-block rounded px-1.5 py-0.5 text-[9px] font-medium ${qualCls}`}>
+                  {qualLabel}
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -340,6 +420,9 @@ export function LiveMatchContext({ fixture, home, away }: {
       {expanded && (
         <div className="px-3 pb-3 space-y-3 border-t border-zinc-100">
 
+          {/* Tournament Stats — derived from entered results, always shown when available */}
+          <TournamentStats fixture={fixture} home={home} away={away} />
+
           {/* Lineups, absences, suspensions */}
           <div className="pt-3 grid grid-cols-2 gap-x-4 gap-y-2">
             {([
@@ -394,22 +477,14 @@ export function LiveMatchContext({ fixture, home, away }: {
             </div>
           )}
 
-          {/* Venue */}
-          {(ctx!.venue_name || fixture.venue || ctx!.venue_capacity) && (
+          {/* Venue — only show when altitude or weather materially affects the match */}
+          {(!!ctx!.venue_altitude_m || ctx!.weather_condition) && (
             <div className="border-t border-zinc-100 pt-3">
-              <p className="text-[10px] font-semibold text-zinc-500 mb-0.5">Venue</p>
-              <p className="text-[10px] text-zinc-700">
+              <p className="text-[10px] text-zinc-500">
                 {ctx!.venue_name ?? fixture.venue}
-                {ctx!.venue_city && ` · ${ctx!.venue_city}`}
-                {ctx!.venue_capacity && ` · ${ctx!.venue_capacity.toLocaleString()} cap`}
-                {ctx!.venue_indoor !== undefined && ` · ${ctx!.venue_indoor ? 'Indoor' : 'Outdoor'}`}
-                {!!ctx!.venue_altitude_m && ` · ${ctx!.venue_altitude_m}m alt`}
+                {!!ctx!.venue_altitude_m && ` · ${ctx!.venue_altitude_m}m altitude`}
+                {ctx!.weather_condition && ` · ${ctx!.weather_temp_c !== undefined ? `${ctx!.weather_temp_c}°C ` : ''}${ctx!.weather_condition}`}
               </p>
-              {ctx!.weather_condition && (
-                <p className="text-[10px] text-zinc-500 mt-0.5">
-                  {ctx!.weather_temp_c !== undefined ? `${ctx!.weather_temp_c}°C · ` : ''}{ctx!.weather_condition}
-                </p>
-              )}
             </div>
           )}
 
