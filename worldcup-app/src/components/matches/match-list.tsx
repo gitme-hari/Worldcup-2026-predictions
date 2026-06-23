@@ -2,16 +2,17 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   getFixtures, getTeams, getResults,
-  getLockedPredictions,
+  getLockedPredictions, saveResult, deleteResult,
 } from '@/lib/store'
 import type { LockedPrediction } from '@/lib/store'
 import { formatDate } from '@/lib/utils'
-import type { SeedFixture } from '@/lib/seed-data'
+import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronDown, ChevronUp, Edit3, Flag, Trash2 } from 'lucide-react'
+import { ScoreStepper } from '@/components/ui/score-stepper'
 import { FixturePredictionPanel } from './fixture-prediction-panel'
 
 function poissonProb(lambda: number, k: number): number {
@@ -50,26 +51,78 @@ function sourceLabel(src?: string, model?: string): string {
   return `Model Pick${mdl}`
 }
 
-// ── Completed match card (no accordion — always shows result strip) ────────────
+// ── Inline result edit form (pre-populated) ───────────────────────────────────
 
-function FinalCard({ fix, home, away, actualH, actualA, locked }: {
+function ResultEditForm({ homeCode, awayCode, initialH, initialA, onSave, onCancel }: {
+  homeCode: string; awayCode: string
+  initialH: number; initialA: number
+  onSave: (h: number, a: number) => void; onCancel: () => void
+}) {
+  const [h, setH] = useState(initialH)
+  const [a, setA] = useState(initialA)
+  return (
+    <div className="mt-2.5 rounded-md border border-zinc-200 bg-white px-3 py-3 space-y-3">
+      <p className="text-xs font-semibold text-zinc-600">Edit Result</p>
+      <div className="flex items-start gap-3">
+        <ScoreStepper label={`${homeCode} goals`} value={h} onChange={setH} />
+        <div className="text-zinc-300 text-xl pt-7 shrink-0">–</div>
+        <ScoreStepper label={`${awayCode} goals`} value={a} onChange={setA} />
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onSave(h, a)}
+          className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-zinc-900 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-700 transition-colors"
+        >
+          <Flag className="h-3.5 w-3.5" /> Save Result
+        </button>
+        <button
+          onClick={onCancel}
+          className="rounded-md border border-zinc-200 px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-50 transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Completed match card ───────────────────────────────────────────────────────
+
+function FinalCard({ fix, home, away, actualH, actualA, locked, onResultUpdated, onResultDeleted }: {
   fix: SeedFixture
-  home: { name: string; flag_url?: string | null } | undefined
-  away: { name: string; flag_url?: string | null } | undefined
+  home: SeedTeam | undefined
+  away: SeedTeam | undefined
   actualH: number
   actualA: number
   locked?: LockedPrediction
+  onResultUpdated: (h: number, a: number) => void
+  onResultDeleted: () => void
 }) {
+  const [editing, setEditing]     = useState(false)
+  const [confirming, setConfirming] = useState(false)
+
   const rH  = locked ? Math.round(locked.home_goals) : null
   const rA  = locked ? Math.round(locked.away_goals) : null
   const pts = (rH !== null && rA !== null) ? poolScore(rH, rA, actualH, actualA) : null
   const isDecimal = locked && (locked.home_goals !== rH || locked.away_goals !== rA)
 
   const ptsConfig: Record<number, { label: string; cls: string }> = {
-    4: { label: '4 pts ✓ Exact',      cls: 'text-green-700 bg-green-50' },
-    2: { label: '2 pts ✓ Winner+GD',  cls: 'text-blue-700 bg-blue-50'   },
-    1: { label: '1 pt ✓ Winner',      cls: 'text-amber-700 bg-amber-50' },
-    0: { label: '0 pts ✗ Missed',     cls: 'text-red-700 bg-red-50'     },
+    4: { label: '4 pts ✓ Exact',     cls: 'text-green-700 bg-green-50' },
+    2: { label: '2 pts ✓ Winner+GD', cls: 'text-blue-700 bg-blue-50'   },
+    1: { label: '1 pt ✓ Winner',     cls: 'text-amber-700 bg-amber-50' },
+    0: { label: '0 pts ✗ Missed',    cls: 'text-red-700 bg-red-50'     },
+  }
+
+  function handleSaveEdit(h: number, a: number) {
+    saveResult({ fixture_id: fix.id, home_goals: h, away_goals: a })
+    onResultUpdated(h, a)
+    setEditing(false)
+  }
+
+  function handleConfirmDelete() {
+    deleteResult(fix.id)
+    onResultDeleted()
+    setConfirming(false)
   }
 
   return (
@@ -98,12 +151,10 @@ function FinalCard({ fix, home, away, actualH, actualA, locked }: {
       {/* Result strip */}
       {locked && rH !== null && rA !== null && pts !== null ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2 border-t border-zinc-100 pt-2.5">
-          {/* Actual */}
           <div>
             <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">Actual</p>
             <p className="text-lg font-black text-green-700 tabular-nums leading-none">{actualH}–{actualA}</p>
           </div>
-          {/* My Pick */}
           <div>
             <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">My Pick</p>
             <p className="text-lg font-bold text-blue-700 tabular-nums leading-none">{rH}–{rA}</p>
@@ -111,21 +162,18 @@ function FinalCard({ fix, home, away, actualH, actualA, locked }: {
               <p className="text-[9px] text-zinc-400 mt-0.5">{locked.home_goals.toFixed(1)}–{locked.away_goals.toFixed(1)} xG</p>
             )}
           </div>
-          {/* Points */}
           <div>
             <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">Points</p>
             <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${ptsConfig[pts]?.cls ?? ptsConfig[0].cls}`}>
               {ptsConfig[pts]?.label ?? ptsConfig[0].label}
             </span>
           </div>
-          {/* Source */}
           <div>
             <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">Source</p>
             <p className="text-[10px] font-medium text-zinc-600 leading-tight">{sourceLabel(locked.pick_source, locked.model)}</p>
           </div>
         </div>
       ) : (
-        /* No pick recorded */
         <div className="flex items-center gap-3 border-t border-zinc-100 pt-2.5">
           <div>
             <p className="text-[9px] uppercase tracking-widest text-zinc-400 mb-0.5">Actual</p>
@@ -136,6 +184,50 @@ function FinalCard({ fix, home, away, actualH, actualA, locked }: {
               No pick recorded · backfill in Settings → Recovery
             </span>
           </div>
+        </div>
+      )}
+
+      {/* Result management — edit / delete / confirm */}
+      {editing ? (
+        <ResultEditForm
+          homeCode={home?.code ?? 'Home'}
+          awayCode={away?.code ?? 'Away'}
+          initialH={actualH}
+          initialA={actualA}
+          onSave={handleSaveEdit}
+          onCancel={() => setEditing(false)}
+        />
+      ) : confirming ? (
+        <div className="mt-2.5 flex items-center gap-2 rounded-md border border-red-100 bg-red-50 px-3 py-2.5">
+          <p className="flex-1 text-xs text-red-700">Delete result {actualH}–{actualA}?</p>
+          <button
+            onClick={handleConfirmDelete}
+            className="rounded bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-red-700 transition-colors"
+          >
+            Yes, delete
+          </button>
+          <button
+            onClick={() => setConfirming(false)}
+            className="rounded border border-red-200 px-2.5 py-1 text-[11px] text-red-600 hover:bg-red-100 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div className="mt-2 border-t border-zinc-100 pt-2 flex items-center gap-3">
+          <button
+            onClick={() => setEditing(true)}
+            className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-800 transition-colors"
+          >
+            <Edit3 className="h-3 w-3" /> Edit Result
+          </button>
+          <span className="text-zinc-200">·</span>
+          <button
+            onClick={() => setConfirming(true)}
+            className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-red-500 transition-colors"
+          >
+            <Trash2 className="h-3 w-3" /> Delete Result
+          </button>
         </div>
       )}
     </div>
@@ -300,6 +392,12 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
                     actualH={result.home_goals}
                     actualA={result.away_goals}
                     locked={locked ?? undefined}
+                    onResultUpdated={(h, a) =>
+                      setSavedResults(prev => ({ ...prev, [f.id]: { home_goals: h, away_goals: a } }))
+                    }
+                    onResultDeleted={() =>
+                      setSavedResults(prev => { const n = { ...prev }; delete n[f.id]; return n })
+                    }
                   />
                 </Card>
               ) : (
