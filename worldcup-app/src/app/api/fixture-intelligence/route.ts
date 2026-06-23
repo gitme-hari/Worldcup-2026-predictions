@@ -6,6 +6,8 @@ import {
   API_FOOTBALL_SEASON,
   TEAM_API_IDS,
   fromApiTeamId,
+  isSafeMapping,
+  getMappingConfidence,
 } from '@/lib/api-football-ids'
 
 // ── API-Football client helpers ───────────────────────────────────────────────
@@ -208,11 +210,19 @@ async function handleContext(
       return undefined
     }
 
+    // Safety check: refuse to use unverified mappings — wrong ID = wrong team's data
+    for (const side of [seedFixture.home_team_id, seedFixture.away_team_id]) {
+      if (!isSafeMapping(side)) {
+        errors.push(`API mapping unverified for '${side}' (confidence: ${getMappingConfidence(side)}) — visit /api/verify-mappings to resolve`)
+        return undefined
+      }
+    }
+
     homeApiId = TEAM_API_IDS[seedFixture.home_team_id]
     awayApiId = TEAM_API_IDS[seedFixture.away_team_id]
 
     if (!homeApiId || !awayApiId) {
-      errors.push(`no API-Football ID mapping for ${seedFixture.home_team_id} or ${seedFixture.away_team_id}`)
+      errors.push(`no confirmed API-Football ID for ${seedFixture.home_team_id} or ${seedFixture.away_team_id}`)
       return undefined
     }
 
