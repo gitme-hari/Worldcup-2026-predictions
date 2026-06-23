@@ -1,11 +1,12 @@
 'use client'
 import { useState } from 'react'
-import { Zap, RefreshCw, Plus, ChevronDown, ChevronUp } from 'lucide-react'
+import { Zap, RefreshCw, Plus, ChevronDown, ChevronUp, AlertCircle, Users } from 'lucide-react'
 import {
   type MatchContext, type ImpactSignal, type LineupStatus,
   getMatchContext, saveMatchContext, clearMatchContext,
   IMPACT_LABELS, formSummary, emptyContext,
 } from '@/lib/match-context'
+import type { FixtureIntelligenceResponse } from '@/app/api/fixture-intelligence/route'
 import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -28,6 +29,38 @@ const LINEUP_LABEL: Record<LineupStatus, string> = {
 
 function Pill({ cls, label }: { cls: string; label: string }) {
   return <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>{label}</span>
+}
+
+// ── Starting XI grid ──────────────────────────────────────────────────────────
+
+function StartingXI({ players, formation, coach, teamCode }: {
+  players: string[]
+  formation?: string
+  coach?: string
+  teamCode: string
+}) {
+  const [show, setShow] = useState(false)
+  if (players.length === 0) return null
+  return (
+    <div>
+      <button
+        onClick={() => setShow(v => !v)}
+        className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-zinc-600 transition-colors"
+      >
+        <Users className="h-3 w-3" />
+        {show ? 'Hide' : 'Show'} XI
+        {formation && <span className="ml-1 font-mono">{formation}</span>}
+      </button>
+      {show && (
+        <div className="mt-1 space-y-0.5">
+          {players.map((name, i) => (
+            <p key={i} className="text-[10px] text-zinc-600">{i + 1}. {name}</p>
+          ))}
+          {coach && <p className="text-[10px] text-zinc-400 mt-1 italic">Coach: {coach}</p>}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Manual entry form ─────────────────────────────────────────────────────────
@@ -134,6 +167,17 @@ function EntryForm({ fixtureId, home, away, existing, onSave, onCancel }: {
   )
 }
 
+// ── API refresh ───────────────────────────────────────────────────────────────
+
+async function fetchContextFromApi(fixtureId: string): Promise<{ ctx: MatchContext | null; errors: string[] }> {
+  const res = await fetch(`/api/fixture-intelligence?type=context&fixture=${encodeURIComponent(fixtureId)}`)
+  if (!res.ok) {
+    return { ctx: null, errors: [`Server error ${res.status}`] }
+  }
+  const data: FixtureIntelligenceResponse = await res.json()
+  return { ctx: data.context ?? null, errors: data.errors ?? [] }
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function LiveMatchContext({ fixture, home, away }: {
@@ -141,35 +185,67 @@ export function LiveMatchContext({ fixture, home, away }: {
   home: SeedTeam | undefined
   away: SeedTeam | undefined
 }) {
-  const [ctx,      setCtx]      = useState<MatchContext | undefined>(() => getMatchContext(fixture.id))
-  const [editMode, setEditMode] = useState(false)
-  const [expanded, setExpanded] = useState(false)
+  const [ctx,       setCtx]       = useState<MatchContext | undefined>(() => getMatchContext(fixture.id))
+  const [editMode,  setEditMode]  = useState(false)
+  const [expanded,  setExpanded]  = useState(false)
+  const [loading,   setLoading]   = useState(false)
+  const [apiError,  setApiError]  = useState<string | null>(null)
+
+  async function handleRefresh() {
+    setLoading(true)
+    setApiError(null)
+    try {
+      const { ctx: fetched, errors } = await fetchContextFromApi(fixture.id)
+      if (fetched) {
+        saveMatchContext(fetched)
+        setCtx(fetched)
+        setExpanded(true)
+      } else {
+        const msg = errors.length > 0 ? errors.join(' · ') : 'No data returned from API'
+        setApiError(msg)
+      }
+    } catch {
+      setApiError('Network error — could not reach /api/fixture-intelligence')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // ── Empty state ─────────────────────────────────────────────────────────────
   if (!ctx && !editMode) {
     return (
-      <div className="rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2.5 flex items-center justify-between gap-2">
-        <div>
-          <p className="text-xs font-semibold text-zinc-600 flex items-center gap-1.5">
-            <Zap className="h-3.5 w-3.5 text-zinc-400" /> Live Match Context
-          </p>
-          <p className="text-[10px] text-zinc-400 mt-0.5">No data loaded yet</p>
+      <div className="rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2.5 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-semibold text-zinc-600 flex items-center gap-1.5">
+              <Zap className="h-3.5 w-3.5 text-zinc-400" /> Live Match Context
+            </p>
+            <p className="text-[10px] text-zinc-400 mt-0.5">No data loaded yet</p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={handleRefresh}
+              disabled={loading}
+              className="flex items-center gap-1 rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-wait transition-colors"
+            >
+              <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Loading…' : 'Refresh'}
+            </button>
+            <button
+              onClick={() => setEditMode(true)}
+              disabled={loading}
+              className="flex items-center gap-1 rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] text-zinc-500 hover:bg-zinc-50 disabled:opacity-50 transition-colors"
+            >
+              <Plus className="h-3 w-3" /> Add manually
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            disabled
-            className="flex items-center gap-1 rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] text-zinc-400 cursor-not-allowed"
-            title="Connect an API provider to enable auto-refresh"
-          >
-            <RefreshCw className="h-3 w-3" /> Refresh
-          </button>
-          <button
-            onClick={() => setEditMode(true)}
-            className="flex items-center gap-1 rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] text-zinc-500 hover:bg-zinc-50 transition-colors"
-          >
-            <Plus className="h-3 w-3" /> Add manually
-          </button>
-        </div>
+        {apiError && (
+          <div className="flex items-start gap-1.5 rounded bg-red-50 border border-red-100 px-2 py-1.5">
+            <AlertCircle className="h-3 w-3 text-red-400 shrink-0 mt-0.5" />
+            <p className="text-[10px] text-red-600">{apiError}</p>
+          </div>
+        )}
       </div>
     )
   }
@@ -195,45 +271,82 @@ export function LiveMatchContext({ fixture, home, away }: {
 
   // ── Loaded state ────────────────────────────────────────────────────────────
   const updatedAt = new Date(ctx!.fetched_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  const hasAbsences = ctx!.home_absences.length + ctx!.away_absences.length > 0
+  const hasSuspensions = (ctx!.home_suspensions?.length ?? 0) + (ctx!.away_suspensions?.length ?? 0) > 0
 
   return (
     <div className="rounded-md border border-zinc-200 bg-white overflow-hidden">
-      <button
-        onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-zinc-50 transition-colors"
-      >
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Zap className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
-          <span className="text-xs font-semibold text-zinc-700">Live Match Context</span>
-          {ctx!.impact_signal !== 'none' && (
-            <Pill cls={SIGNAL_CLS[ctx!.impact_signal]} label={IMPACT_LABELS[ctx!.impact_signal]} />
-          )}
+      {/* Header row */}
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="flex-1 flex items-center justify-between px-3 py-2.5 text-left hover:bg-zinc-50 transition-colors min-w-0"
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Zap className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+            <span className="text-xs font-semibold text-zinc-700">Live Match Context</span>
+            {ctx!.impact_signal !== 'none' && (
+              <Pill cls={SIGNAL_CLS[ctx!.impact_signal]} label={IMPACT_LABELS[ctx!.impact_signal]} />
+            )}
+            {hasAbsences && (
+              <Pill cls="bg-red-50 text-red-600" label={`${ctx!.home_absences.length + ctx!.away_absences.length} absent`} />
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[9px] text-zinc-300">{ctx!.source} · {updatedAt}</span>
+            {expanded ? <ChevronUp className="h-3.5 w-3.5 text-zinc-400" /> : <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />}
+          </div>
+        </button>
+        {/* Inline refresh button when data is loaded */}
+        <button
+          onClick={handleRefresh}
+          disabled={loading}
+          className="px-2.5 py-2.5 text-zinc-400 hover:text-zinc-600 disabled:opacity-50 transition-colors shrink-0"
+          title="Refresh from API-Football"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {/* API error while data already loaded */}
+      {apiError && (
+        <div className="mx-3 mb-2 flex items-start gap-1.5 rounded bg-red-50 border border-red-100 px-2 py-1.5">
+          <AlertCircle className="h-3 w-3 text-red-400 shrink-0 mt-0.5" />
+          <p className="text-[10px] text-red-600">{apiError}</p>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[9px] text-zinc-300">{ctx!.source} · {updatedAt}</span>
-          {expanded ? <ChevronUp className="h-3.5 w-3.5 text-zinc-400" /> : <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />}
-        </div>
-      </button>
+      )}
 
       {expanded && (
         <div className="px-3 pb-3 space-y-3 border-t border-zinc-100">
 
-          {/* Lineups & Availability */}
-          <div className="pt-3 grid grid-cols-2 gap-x-4">
+          {/* Lineups, absences, suspensions */}
+          <div className="pt-3 grid grid-cols-2 gap-x-4 gap-y-2">
             {([
-              ['home', home, ctx!.home_lineup_status, ctx!.home_absences],
-              ['away', away, ctx!.away_lineup_status, ctx!.away_absences],
-            ] as const).map(([side, team, status, absences]) => (
-              <div key={side}>
-                <div className="flex items-center gap-1.5 mb-1">
+              ['home', home, ctx!.home_lineup_status, ctx!.home_absences, ctx!.home_suspensions, ctx!.home_startXI, ctx!.home_formation, ctx!.home_coach],
+              ['away', away, ctx!.away_lineup_status, ctx!.away_absences, ctx!.away_suspensions, ctx!.away_startXI, ctx!.away_formation, ctx!.away_coach],
+            ] as const).map(([side, team, status, absences, suspensions, startXI, formation, coach]) => (
+              <div key={side} className="space-y-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <span>{team?.flag_url}</span>
                   <span className="text-[10px] font-semibold text-zinc-600">{team?.code ?? side}</span>
                   <Pill cls={LINEUP_CLS[status]} label={LINEUP_LABEL[status]} />
                 </div>
                 {absences.length > 0
-                  ? absences.map((a, i) => <p key={i} className="text-[10px] text-red-600">✗ {a}</p>)
-                  : <p className="text-[10px] text-zinc-400">No absences noted</p>
+                  ? absences.map((a, i) => (
+                      <p key={i} className="text-[10px] text-red-600 flex items-center gap-1">
+                        <span className="text-red-400">✗</span> {a}
+                      </p>
+                    ))
+                  : <p className="text-[10px] text-zinc-400">No injuries reported</p>
                 }
+                {(suspensions?.length ?? 0) > 0 && suspensions!.map((s, i) => (
+                  <p key={i} className="text-[10px] text-amber-600 flex items-center gap-1">
+                    <span>⚠</span> {s} <span className="text-zinc-400">(susp)</span>
+                  </p>
+                ))}
+                {startXI && startXI.length > 0 && (
+                  <StartingXI players={startXI} formation={formation} coach={coach} teamCode={team?.code ?? side} />
+                )}
               </div>
             ))}
           </div>
@@ -255,12 +368,14 @@ export function LiveMatchContext({ fixture, home, away }: {
             </div>
           )}
 
-          {/* Venue & Weather */}
-          {(ctx!.venue_name || fixture.venue || ctx!.weather_condition) && (
+          {/* Venue */}
+          {(ctx!.venue_name || fixture.venue || ctx!.venue_capacity) && (
             <div className="border-t border-zinc-100 pt-3">
               <p className="text-[10px] font-semibold text-zinc-500 mb-0.5">Venue</p>
               <p className="text-[10px] text-zinc-700">
                 {ctx!.venue_name ?? fixture.venue}
+                {ctx!.venue_city && ` · ${ctx!.venue_city}`}
+                {ctx!.venue_capacity && ` · ${ctx!.venue_capacity.toLocaleString()} cap`}
                 {ctx!.venue_indoor !== undefined && ` · ${ctx!.venue_indoor ? 'Indoor' : 'Outdoor'}`}
                 {!!ctx!.venue_altitude_m && ` · ${ctx!.venue_altitude_m}m alt`}
               </p>
@@ -285,9 +400,14 @@ export function LiveMatchContext({ fixture, home, away }: {
 
           {/* Footer */}
           <div className="border-t border-zinc-100 pt-2 flex items-center gap-2">
-            <button onClick={() => setEditMode(true)} className="text-[10px] text-zinc-400 hover:text-zinc-600 transition-colors">Edit</button>
+            <button onClick={() => setEditMode(true)} className="text-[10px] text-zinc-400 hover:text-zinc-600 transition-colors">Edit manually</button>
             <span className="text-zinc-200">·</span>
-            <button onClick={() => { clearMatchContext(fixture.id); setCtx(undefined); setExpanded(false) }} className="text-[10px] text-zinc-400 hover:text-red-500 transition-colors">Clear</button>
+            <button
+              onClick={() => { clearMatchContext(fixture.id); setCtx(undefined); setExpanded(false); setApiError(null) }}
+              className="text-[10px] text-zinc-400 hover:text-red-500 transition-colors"
+            >
+              Clear
+            </button>
           </div>
         </div>
       )}
