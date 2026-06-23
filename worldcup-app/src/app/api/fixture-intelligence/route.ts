@@ -140,6 +140,38 @@ function parseFormEntries(formStr: string): FormEntry[] {
     .map(result => ({ result, goals_for: 0, goals_against: 0 }))
 }
 
+// ── Form extraction from season fixtures ─────────────────────────────────────
+
+function extractTeamForm(
+  fixtures: NonNullable<ApiFixturesResponse['response']>,
+  teamApiId: number,
+  excludeId: number | undefined,
+  n = 5,
+): FormEntry[] {
+  const DONE = new Set(['FT', 'AET', 'PEN'])
+  return fixtures
+    .filter(f => {
+      if (!DONE.has(f.fixture?.status?.short ?? '')) return false
+      const ids = [f.teams?.home?.id, f.teams?.away?.id]
+      if (!ids.includes(teamApiId)) return false
+      if (excludeId !== undefined && f.fixture?.id === excludeId) return false
+      return true
+    })
+    .sort((a, b) =>
+      new Date(b.fixture?.date ?? '').getTime() - new Date(a.fixture?.date ?? '').getTime()
+    )
+    .slice(0, n)
+    .map(f => {
+      const isHome = f.teams?.home?.id === teamApiId
+      const hg     = f.goals?.home ?? 0
+      const ag     = f.goals?.away ?? 0
+      const gf     = isHome ? hg : ag
+      const ga     = isHome ? ag : hg
+      const result: 'W' | 'D' | 'L' = gf > ga ? 'W' : gf < ga ? 'L' : 'D'
+      return { result, goals_for: gf, goals_against: ga }
+    })
+}
+
 // ── Handler: context (injuries + lineups for a single fixture) ────────────────
 
 async function handleContext(
@@ -155,6 +187,7 @@ async function handleContext(
   let venueName: string | undefined
   let venueCity: string | undefined
   let venueCapacity: number | undefined
+  let allFixtures: NonNullable<ApiFixturesResponse['response']> = []
 
   try {
     const fixturesRes = await apiFetch<ApiFixturesResponse>(
@@ -163,7 +196,7 @@ async function handleContext(
     // Find the fixture by matching team IDs derived from our internal fixture id.
     // Internal fixture ids encode team ids in the seed data; we look up both sides.
     // Fallback: match by date proximity if needed. For now match by team ids.
-    const allFixtures = fixturesRes.response ?? []
+    allFixtures = fixturesRes.response ?? []
 
     // We need home/away internal team ids from the fixture id.
     // Since this route only receives our internal fixture id string, we import
@@ -256,6 +289,10 @@ async function handleContext(
     }
   }
 
+  // Extract last-5 form from the season fixtures we already fetched — zero extra API calls
+  const homeForm = homeApiId !== undefined ? extractTeamForm(allFixtures, homeApiId, apiFixtureId) : []
+  const awayForm = awayApiId !== undefined ? extractTeamForm(allFixtures, awayApiId, apiFixtureId) : []
+
   const ctx: MatchContext = {
     fixture_id:           fixtureId,
     source:               'api-football',
@@ -272,8 +309,8 @@ async function handleContext(
     away_formation:       awayFormation,
     home_coach:           homeCoach,
     away_coach:           awayCoach,
-    home_form:            [],
-    away_form:            [],
+    home_form:            homeForm,
+    away_form:            awayForm,
     venue_name:           venueName,
     venue_city:           venueCity,
     venue_capacity:       venueCapacity,
@@ -428,12 +465,15 @@ interface ApiFixturesResponse {
   response?: Array<{
     fixture?: {
       id?: number
+      date?: string
+      status?: { short?: string }
       venue?: { name?: string; city?: string; capacity?: number }
     }
     teams?: {
       home?: { id?: number; name?: string }
       away?: { id?: number; name?: string }
     }
+    goals?: { home?: number | null; away?: number | null }
   }>
 }
 

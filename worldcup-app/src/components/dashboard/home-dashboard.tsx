@@ -6,9 +6,11 @@ import {
   computeMetrics, fetchLiveData, getLiveData,
   savePoolRecommendation, getPoolRecommendation,
 } from '@/lib/store'
-import type { SeedFixture } from '@/lib/seed-data'
+import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
 import { buildRecommendation } from '@/lib/recommendation-engine'
 import { buildTeamAdjustments, teamSignal, hasNotableSignal } from '@/lib/learning-layer'
+import { getMatchContext } from '@/lib/match-context'
+import { buildContextInsights, computeImpactLevel, type ContextInsight } from '@/lib/context-insights'
 import { computeDisagreementScore } from '@/lib/analytics'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { AlertCircle, AlertTriangle, CheckCircle, ClipboardList, RefreshCw, TrendingUp, Trophy } from 'lucide-react'
@@ -210,6 +212,131 @@ function ActionSummary({ needsPick, poolRows }: {
   )
 }
 
+// ── Context signals (from API-Football MatchContext) ──────────────────────────
+
+function ContextSignals({ fixtureId, home, away }: {
+  fixtureId: string
+  home: SeedTeam | undefined
+  away: SeedTeam | undefined
+}) {
+  const ctx = getMatchContext(fixtureId)
+  const insights = ctx ? buildContextInsights(ctx, home, away) : []
+  const visible = insights.filter(i => i.type !== 'info').slice(0, 3)
+
+  const iconFor = (type: ContextInsight['type']) =>
+    type === 'positive' ? '✓' : type === 'warning' ? '⚠' : '·'
+  const clsFor = (type: ContextInsight['type']) =>
+    type === 'positive' ? 'text-emerald-600' : type === 'warning' ? 'text-amber-600' : 'text-zinc-500'
+
+  return (
+    <div className="border-t border-zinc-50 pt-2 space-y-0.5">
+      <p className="text-[10px] text-zinc-400 uppercase tracking-wide mb-1">Context affecting recommendation</p>
+      {visible.length === 0 ? (
+        <p className="text-[11px] text-zinc-400">
+          {ctx ? 'No notable context detected' : 'No API context loaded — open fixture to refresh'}
+        </p>
+      ) : visible.map((ins, i) => (
+        <p key={i} className={`text-[11px] flex items-center gap-1 ${clsFor(ins.type)}`}>
+          <span className="shrink-0">{iconFor(ins.type)}</span> {ins.text}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+// ── Recommendation inputs (intelligence audit) ────────────────────────────────
+
+function RecommendationInputs({ rec, fixtureId, learningAdjs, homeId, awayId, homeName, awayName }: {
+  rec: ReturnType<typeof buildRecommendation>
+  fixtureId: string
+  learningAdjs: ReturnType<typeof buildTeamAdjustments>
+  homeId: string; awayId: string; homeName: string; awayName: string
+}) {
+  const [show, setShow] = useState(false)
+  if (!rec) return null
+
+  const ctx    = getMatchContext(fixtureId)
+  const impact = ctx ? computeImpactLevel(ctx) : null
+  const homeAdj = learningAdjs.find(a => a.teamId === homeId)
+  const awayAdj = learningAdjs.find(a => a.teamId === awayId)
+
+  return (
+    <div className="border-t border-zinc-50 pt-2">
+      <button
+        onClick={() => setShow(v => !v)}
+        className="text-[10px] text-zinc-400 hover:text-zinc-600 transition-colors"
+      >
+        {show ? '▲' : '▶'} Recommendation inputs
+      </button>
+      {show && (
+        <div className="mt-1.5 space-y-0.5 text-[10px] text-zinc-500">
+          <p>
+            <span className="font-medium">Models:</span>{' '}
+            {(['A', 'B', 'C'] as const).map(m => {
+              const sl = rec.modelScorelines[m]
+              return sl ? `${m}: ${sl.h}–${sl.a}` : null
+            }).filter(Boolean).join(' · ')}
+          </p>
+          <p><span className="font-medium">Avg xG:</span> {rec.avgXgHome}–{rec.avgXgAway} · Outcome: {Math.round(rec.outcomeProbs.home * 100)}%/{Math.round(rec.outcomeProbs.draw * 100)}%/{Math.round(rec.outcomeProbs.away * 100)}%</p>
+          {homeAdj && hasNotableSignal(homeAdj) && (
+            <p><span className="font-medium">Learning:</span> {homeName} {teamSignal(homeAdj).headline.toLowerCase()}</p>
+          )}
+          {awayAdj && hasNotableSignal(awayAdj) && (
+            <p><span className="font-medium">Learning:</span> {awayName} {teamSignal(awayAdj).headline.toLowerCase()}</p>
+          )}
+          {impact && impact.level !== 'Low' && (
+            <p><span className="font-medium">Context impact:</span> {impact.level} — {impact.reason}</p>
+          )}
+          {!ctx && <p className="text-zinc-400">No API context loaded for this fixture</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Upcoming intelligence ─────────────────────────────────────────────────────
+
+function UpcomingIntelligence() {
+  const fixtures = getFixtures()
+  const teams    = getTeams()
+  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
+  const now      = Date.now()
+  const horizon  = now + 7 * 24 * 3_600_000
+
+  const items: Array<{ text: string; type: ContextInsight['type'] }> = []
+  for (const fix of fixtures) {
+    const kickoff = new Date(fix.kickoff_utc).getTime()
+    if (kickoff <= now || kickoff > horizon) continue
+    const ctx = getMatchContext(fix.id)
+    if (!ctx || ctx.source !== 'api-football') continue
+    const insights = buildContextInsights(ctx, teamMap[fix.home_team_id], teamMap[fix.away_team_id])
+    for (const ins of insights) {
+      if (ins.type !== 'info') items.push(ins)
+    }
+  }
+
+  if (items.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium text-zinc-700">Upcoming Intelligence</CardTitle>
+        <p className="text-[10px] text-zinc-400 mt-0.5">Items that could affect prediction confidence</p>
+      </CardHeader>
+      <CardContent className="space-y-1 pt-0">
+        {items.slice(0, 6).map((item, i) => (
+          <div key={i} className="flex items-start gap-2 text-xs">
+            <span className={item.type === 'positive' ? 'text-emerald-500' : 'text-amber-500'}>
+              {item.type === 'positive' ? '↑' : '⚠'}
+            </span>
+            <span className="text-zinc-600">{item.text}</span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
 // ── Section 2: Picks to Submit ─────────────────────────────────────────────────
 // Engine recommendation per fixture — no model labels in primary view
 
@@ -325,6 +452,20 @@ function PicksToSubmit({ needsPick, window, onWindowChange, learningAdjs }: {
                   })}
                 </div>
               )}
+
+              {/* API context insights */}
+              <ContextSignals fixtureId={fix.id} home={home} away={away} />
+
+              {/* Intelligence audit — collapsible */}
+              <RecommendationInputs
+                rec={rec}
+                fixtureId={fix.id}
+                learningAdjs={learningAdjs}
+                homeId={fix.home_team_id}
+                awayId={fix.away_team_id}
+                homeName={home?.name ?? fix.home_team_id}
+                awayName={away?.name ?? fix.away_team_id}
+              />
             </div>
           )
         })}
@@ -695,6 +836,7 @@ export function HomeDashboard() {
         onWindowChange={setPickWindow}
         learningAdjs={learningAdjs}
       />
+      <UpcomingIntelligence />
       <UncertainFixtures needsPick={needsPick} />
       <PoolPosition poolRows={poolRows} />
       <LiveIntelligencePanel />
