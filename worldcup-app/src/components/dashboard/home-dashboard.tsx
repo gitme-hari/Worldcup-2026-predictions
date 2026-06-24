@@ -8,10 +8,11 @@ import {
 } from '@/lib/store'
 import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
 import { buildRecommendation } from '@/lib/recommendation-engine'
-import { buildTeamAdjustments, teamSignal, hasNotableSignal } from '@/lib/learning-layer'
+import { buildTeamAdjustments } from '@/lib/learning-layer'
 import { getMatchContext } from '@/lib/match-context'
-import { buildTournamentInsights, computeImpactLevel, type ContextInsight } from '@/lib/context-insights'
+import { type ContextInsight, buildTournamentInsights } from '@/lib/context-insights'
 import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
+import { buildDecisionSupport } from '@/lib/decision-support'
 import { computeDisagreementScore } from '@/lib/analytics'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { AlertCircle, AlertTriangle, CheckCircle, ClipboardList, RefreshCw, TrendingUp, Trophy } from 'lucide-react'
@@ -213,102 +214,100 @@ function ActionSummary({ needsPick, poolRows }: {
   )
 }
 
-// ── Context signals (tournament stats + optional API context) ─────────────────
+// ── Decision support card (replaces ContextSignals + RecommendationInputs) ────
 
-function ContextSignals({ fixture, home, away }: {
-  fixture: SeedFixture
+function DecisionSupportCard({ rec, fix, home, away, learningAdjs }: {
+  rec: NonNullable<ReturnType<typeof buildRecommendation>>
+  fix: SeedFixture
   home: SeedTeam | undefined
   away: SeedTeam | undefined
+  learningAdjs: ReturnType<typeof buildTeamAdjustments>
 }) {
+  const [showDetail, setShowDetail] = useState(false)
   const fixtures = getFixtures()
   const results  = getResults()
-  const allStandings = computeGroupStandings(fixtures, results)
-  const groupStandings = allStandings[fixture.group] ?? []
+  const allStandings   = computeGroupStandings(fixtures, results)
+  const groupStandings = allStandings[fix.group] ?? []
+  const matchday       = fix.matchday ?? 1
+  const homeStanding   = groupStandings.find(s => s.teamId === fix.home_team_id)
+  const awayStanding   = groupStandings.find(s => s.teamId === fix.away_team_id)
+  const homeQual       = computeQualificationStatus(fix.home_team_id, groupStandings, matchday)
+  const awayQual       = computeQualificationStatus(fix.away_team_id, groupStandings, matchday)
+  const homeAdj        = learningAdjs.find(a => a.teamId === fix.home_team_id)
+  const awayAdj        = learningAdjs.find(a => a.teamId === fix.away_team_id)
+  const apiCtx         = getMatchContext(fix.id)
 
-  const homeStanding = groupStandings.find(s => s.teamId === fixture.home_team_id)
-  const awayStanding = groupStandings.find(s => s.teamId === fixture.away_team_id)
-  const matchday = fixture.matchday ?? 1
+  const ds = buildDecisionSupport({ rec, homeAdj, awayAdj, homeStanding, awayStanding, homeQual, awayQual, apiCtx, home, away })
 
-  const homeQual = computeQualificationStatus(fixture.home_team_id, groupStandings, matchday)
-  const awayQual = computeQualificationStatus(fixture.away_team_id, groupStandings, matchday)
+  const confCls: Record<string, string> = {
+    'High': 'text-emerald-700', 'Medium-High': 'text-emerald-600',
+    'Medium': 'text-amber-600', 'Medium-Low': 'text-amber-700', 'Low': 'text-red-600',
+  }
 
-  const ctx = getMatchContext(fixture.id)
-
-  const insights = buildTournamentInsights(
-    home, away,
-    { standing: homeStanding, qualStatus: homeQual },
-    { standing: awayStanding, qualStatus: awayQual },
-    ctx,
-  )
-
-  // Show non-info first, then fill with info up to 3 total
-  const prioritised = [
-    ...insights.filter(i => i.type !== 'info'),
-    ...insights.filter(i => i.type === 'info'),
+  // Prioritise: challenges first, then supports, max 3
+  const bullets = [
+    ...ds.challengeFactors.map(t => ({ text: t, type: 'challenge' as const })),
+    ...ds.supportFactors.map(t => ({ text: t, type: 'support' as const })),
   ].slice(0, 3)
 
-  const iconFor = (type: ContextInsight['type']) =>
-    type === 'positive' ? '✓' : type === 'warning' ? '⚠' : '·'
-  const clsFor = (type: ContextInsight['type']) =>
-    type === 'positive' ? 'text-emerald-600' : type === 'warning' ? 'text-amber-600' : 'text-zinc-500'
-
-  if (prioritised.length === 0) return null
-
   return (
-    <div className="border-t border-zinc-50 pt-2 space-y-0.5">
-      {prioritised.map((ins, i) => (
-        <p key={i} className={`text-[11px] flex items-center gap-1 ${clsFor(ins.type)}`}>
-          <span className="shrink-0">{iconFor(ins.type)}</span> {ins.text}
+    <div className="border-t border-zinc-50 pt-2 space-y-1.5">
+      {/* Challenge warning */}
+      {ds.challengeLevel === 'significant' && (
+        <p className="text-[10px] font-semibold text-amber-700 flex items-center gap-1">
+          <span>⚠</span> Context challenges this pick
+        </p>
+      )}
+
+      {/* Bullets */}
+      {bullets.map((b, i) => (
+        <p key={i} className={`text-[11px] flex items-start gap-1 ${b.type === 'challenge' ? 'text-amber-700' : 'text-emerald-700'}`}>
+          <span className="shrink-0 font-bold">{b.type === 'challenge' ? '−' : '+'}</span>
+          {b.text}
         </p>
       ))}
-    </div>
-  )
-}
+      {bullets.length === 0 && (
+        <p className="text-[10px] text-zinc-400">No notable context signals yet</p>
+      )}
 
-// ── Recommendation inputs (intelligence audit) ────────────────────────────────
+      {/* Net effect verdict */}
+      {ds.netEffect && (
+        <p className={`text-[10px] font-medium rounded px-2 py-1.5 ${
+          ds.challengeLevel === 'significant' ? 'bg-amber-50 text-amber-800' :
+          ds.challengeLevel === 'minor'       ? 'bg-zinc-50 text-zinc-600' :
+                                               'bg-emerald-50 text-emerald-800'
+        }`}>
+          {ds.netEffect}
+        </p>
+      )}
 
-function RecommendationInputs({ rec, fixtureId, learningAdjs, homeId, awayId, homeName, awayName }: {
-  rec: ReturnType<typeof buildRecommendation>
-  fixtureId: string
-  learningAdjs: ReturnType<typeof buildTeamAdjustments>
-  homeId: string; awayId: string; homeName: string; awayName: string
-}) {
-  const [show, setShow] = useState(false)
-  if (!rec) return null
+      {/* Confidence line */}
+      <p className="text-[10px] text-zinc-500">
+        Confidence: <span className="font-semibold text-zinc-700">{ds.engineConfidence}</span>
+        {ds.contextConfidence !== ds.engineConfidence && (
+          <> → <span className={`font-semibold ${confCls[ds.contextConfidence] ?? ''}`}>{ds.contextConfidence}</span></>
+        )}
+      </p>
 
-  const ctx    = getMatchContext(fixtureId)
-  const impact = ctx ? computeImpactLevel(ctx) : null
-  const homeAdj = learningAdjs.find(a => a.teamId === homeId)
-  const awayAdj = learningAdjs.find(a => a.teamId === awayId)
-
-  return (
-    <div className="border-t border-zinc-50 pt-2">
+      {/* Collapsible detail */}
       <button
-        onClick={() => setShow(v => !v)}
+        onClick={() => setShowDetail(v => !v)}
         className="text-[10px] text-zinc-400 hover:text-zinc-600 transition-colors"
       >
-        {show ? '▲' : '▶'} Recommendation inputs
+        {showDetail ? '▲' : '▶'} Model detail
       </button>
-      {show && (
-        <div className="mt-1.5 space-y-0.5 text-[10px] text-zinc-500">
+      {showDetail && (
+        <div className="space-y-0.5 text-[10px] text-zinc-500 pl-2">
           <p>
-            <span className="font-medium">Models:</span>{' '}
             {(['A', 'B', 'C'] as const).map(m => {
               const sl = rec.modelScorelines[m]
-              return sl ? `${m}: ${sl.h}–${sl.a}` : null
+              return sl ? `Mdl ${m}: ${sl.h}–${sl.a}` : null
             }).filter(Boolean).join(' · ')}
           </p>
-          <p><span className="font-medium">Avg xG:</span> {rec.avgXgHome}–{rec.avgXgAway} · Outcome: {Math.round(rec.outcomeProbs.home * 100)}%/{Math.round(rec.outcomeProbs.draw * 100)}%/{Math.round(rec.outcomeProbs.away * 100)}%</p>
-          {homeAdj && hasNotableSignal(homeAdj) && (
-            <p><span className="font-medium">Learning:</span> {homeName} {teamSignal(homeAdj).headline.toLowerCase()}</p>
+          <p>xG: {rec.avgXgHome}–{rec.avgXgAway} · {Math.round(rec.outcomeProbs.home * 100)}%/{Math.round(rec.outcomeProbs.draw * 100)}%/{Math.round(rec.outcomeProbs.away * 100)}%</p>
+          {rec.alternatives.length > 0 && (
+            <p>Alternatives: {rec.alternatives.slice(0, 3).map(a => `${a.home}–${a.away}`).join(' · ')}</p>
           )}
-          {awayAdj && hasNotableSignal(awayAdj) && (
-            <p><span className="font-medium">Learning:</span> {awayName} {teamSignal(awayAdj).headline.toLowerCase()}</p>
-          )}
-          {impact && impact.level !== 'Low' && (
-            <p><span className="font-medium">Context impact:</span> {impact.level} — {impact.reason}</p>
-          )}
-          {!ctx && <p className="text-zinc-400">No API context loaded for this fixture</p>}
         </div>
       )}
     </div>
@@ -413,13 +412,6 @@ function PicksToSubmit({ needsPick, window, onWindowChange, learningAdjs }: {
           const rec = buildRecommendation(preds)
 
           // Tournament learning signals for this fixture's teams
-          const homeAdj = learningAdjs.find(a => a.teamId === fix.home_team_id)
-          const awayAdj = learningAdjs.find(a => a.teamId === fix.away_team_id)
-          const signals = [
-            ...(homeAdj && hasNotableSignal(homeAdj) ? [{ ...teamSignal(homeAdj), teamName: home?.name ?? homeAdj.teamName }] : []),
-            ...(awayAdj && hasNotableSignal(awayAdj) ? [{ ...teamSignal(awayAdj), teamName: away?.name ?? awayAdj.teamName }] : []),
-          ]
-
           const confStyle =
             rec?.confidence === 'High'   ? 'text-emerald-600' :
             rec?.confidence === 'Medium' ? 'text-amber-600' : 'text-zinc-400'
@@ -463,40 +455,10 @@ function PicksToSubmit({ needsPick, window, onWindowChange, learningAdjs }: {
                 </Link>
               </div>
 
-              {/* Tournament context signals */}
-              {signals.length > 0 && (
-                <div className="border-t border-zinc-50 pt-2 space-y-0.5">
-                  {signals.map((s, i) => {
-                    const arrowCls =
-                      s.colour === 'emerald' ? 'text-emerald-600' :
-                      s.colour === 'red'     ? 'text-red-500' : 'text-amber-500'
-                    const textCls =
-                      s.colour === 'emerald' ? 'text-emerald-700' :
-                      s.colour === 'red'     ? 'text-red-600' : 'text-amber-600'
-                    return (
-                      <p key={i} className="text-[11px] flex items-center gap-1">
-                        <span className={`font-bold ${arrowCls}`}>{s.arrow}</span>
-                        <span className="text-zinc-500">{s.teamName}</span>
-                        <span className={textCls}>{s.headline.toLowerCase()}</span>
-                      </p>
-                    )
-                  })}
-                </div>
+              {/* Decision support */}
+              {rec && (
+                <DecisionSupportCard rec={rec} fix={fix} home={home} away={away} learningAdjs={learningAdjs} />
               )}
-
-              {/* Tournament + API context signals */}
-              <ContextSignals fixture={fix} home={home} away={away} />
-
-              {/* Intelligence audit — collapsible */}
-              <RecommendationInputs
-                rec={rec}
-                fixtureId={fix.id}
-                learningAdjs={learningAdjs}
-                homeId={fix.home_team_id}
-                awayId={fix.away_team_id}
-                homeName={home?.name ?? fix.home_team_id}
-                awayName={away?.name ?? fix.away_team_id}
-              />
             </div>
           )
         })}
