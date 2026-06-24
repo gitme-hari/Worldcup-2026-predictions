@@ -270,6 +270,17 @@ function DecisionSupportCard({ rec, fix, home, away, learningAdjs }: {
         <p className="text-[10px] text-zinc-400">No notable context signals yet</p>
       )}
 
+      {/* Net effect verdict */}
+      {ds.netEffect && (
+        <p className={`text-[10px] font-medium rounded px-2 py-1.5 ${
+          ds.challengeLevel === 'significant' ? 'bg-amber-50 text-amber-800' :
+          ds.challengeLevel === 'minor'       ? 'bg-zinc-50 text-zinc-600' :
+                                               'bg-emerald-50 text-emerald-800'
+        }`}>
+          {ds.netEffect}
+        </p>
+      )}
+
       {/* Confidence line */}
       <p className="text-[10px] text-zinc-500">
         Confidence: <span className="font-semibold text-zinc-700">{ds.engineConfidence}</span>
