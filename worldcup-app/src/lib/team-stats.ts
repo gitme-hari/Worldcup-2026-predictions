@@ -1,7 +1,7 @@
 // Derives group standings, tournament form, and qualification status
 // purely from locally entered results + seed fixtures — no API calls needed.
 
-import type { SeedFixture } from './seed-data'
+import type { SeedFixture, SeedTeam } from './seed-data'
 import type { FormEntry } from './match-context'
 
 export interface GroupStanding {
@@ -177,4 +177,46 @@ export const QUAL_STATUS_CLS: Record<QualificationStatus, string> = {
   must_not_lose:       'text-amber-700 bg-amber-50',
   eliminated:          'text-zinc-500 bg-zinc-100',
   unknown:             'text-zinc-400 bg-zinc-50',
+}
+
+// ── Match history with opponent context ───────────────────────────────────────
+
+export interface MatchHistoryEntry {
+  opponentCode: string
+  opponentName: string
+  gf: number
+  ga: number
+  result: 'W' | 'D' | 'L'
+  isHome: boolean
+}
+
+// Returns played matches for a team, most recent first, with opponent identity.
+export function deriveMatchHistory(
+  teamId: string,
+  fixtures: SeedFixture[],
+  results: Result[],
+  teams: SeedTeam[],
+): MatchHistoryEntry[] {
+  const resultMap = new Map(results.map(r => [r.fixture_id, r]))
+  const teamMap   = new Map(teams.map(t => [t.id, t]))
+
+  return fixtures
+    .filter(f => (f.home_team_id === teamId || f.away_team_id === teamId) && resultMap.has(f.id))
+    .sort((a, b) => new Date(b.kickoff_utc).getTime() - new Date(a.kickoff_utc).getTime())
+    .map(fix => {
+      const r       = resultMap.get(fix.id)!
+      const isHome  = fix.home_team_id === teamId
+      const oppId   = isHome ? fix.away_team_id : fix.home_team_id
+      const opp     = teamMap.get(oppId)
+      const gf      = isHome ? r.home_goals : r.away_goals
+      const ga      = isHome ? r.away_goals : r.home_goals
+      return {
+        opponentCode: opp?.code ?? oppId.toUpperCase(),
+        opponentName: opp?.name ?? oppId,
+        gf,
+        ga,
+        result: gf > ga ? 'W' as const : gf < ga ? 'L' as const : 'D' as const,
+        isHome,
+      }
+    })
 }
