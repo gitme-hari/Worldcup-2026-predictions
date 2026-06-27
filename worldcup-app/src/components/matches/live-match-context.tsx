@@ -163,6 +163,17 @@ function DecisionSupportSection({ fixture, home, away, apiCtx }: {
         ))}
       </div>
 
+      {/* Net effect verdict */}
+      {ds.netEffect && (
+        <div className={`rounded px-2.5 py-2 text-[10px] font-medium ${
+          ds.challengeLevel === 'significant' ? 'bg-amber-50 text-amber-800' :
+          ds.challengeLevel === 'minor'       ? 'bg-zinc-50 text-zinc-700' :
+                                               'bg-emerald-50 text-emerald-800'
+        }`}>
+          {ds.netEffect}
+        </div>
+      )}
+
       {/* Alternatives */}
       {rec.alternatives.length > 0 && (
         <div className="border-t border-zinc-100 pt-2">

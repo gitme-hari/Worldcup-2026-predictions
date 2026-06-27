@@ -23,6 +23,8 @@ export interface DecisionSupport {
   alternativeReasoning: string | null
   // Bullets explaining the context-adjusted confidence
   confidenceReasons: string[]
+  // One-sentence verdict synthesising all factors — whether to trust the pick
+  netEffect: string | null
 }
 
 export interface DecisionSupportParams {
@@ -189,6 +191,31 @@ export function buildDecisionSupport({
   else if (challengeLevel === 'minor') contextConfidence = stepDown(contextConfidence)
   if (homeQual === 'rotation_risk' || awayQual === 'rotation_risk') contextConfidence = stepDown(contextConfidence)
 
+  // ── Net effect verdict ────────────────────────────────────────────────────────
+  let netEffect: string | null = null
+  const s = support.length
+  const c = challenge.length
+  if (s === 0 && c === 0) {
+    netEffect = null  // nothing to say yet — no games played
+  } else if (challengeLevel === 'significant') {
+    if (contextConfidence === 'Low' || contextConfidence === 'Medium-Low')
+      netEffect = 'Context strongly challenges this pick — lean toward an alternative or lower your stake.'
+    else
+      netEffect = 'Multiple context factors argue against this scoreline — review alternatives before locking.'
+  } else if (challengeLevel === 'minor') {
+    netEffect = s >= 2
+      ? 'Context broadly supports the pick, but one factor deserves attention before locking.'
+      : 'One context factor challenges this pick — proceed with some caution.'
+  } else {
+    // no challenge
+    if (s >= 2)
+      netEffect = rec.confidence === 'High'
+        ? 'Context fully supports this pick — high confidence.'
+        : 'Context supports the pick. No significant concerns.'
+    else
+      netEffect = 'No strong context signals — rely on engine confidence alone.'
+  }
+
   return {
     engineConfidence: rec.confidence,
     contextConfidence,
@@ -197,5 +224,6 @@ export function buildDecisionSupport({
     challengeLevel,
     alternativeReasoning,
     confidenceReasons: confReasons.slice(0, 3),
+    netEffect,
   }
 }
