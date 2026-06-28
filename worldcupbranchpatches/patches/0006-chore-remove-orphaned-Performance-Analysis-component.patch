@@ -1,0 +1,2025 @@
+From 1a9e681013bdac43d83bbe120cd948ca44de7a25 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 28 Jun 2026 17:51:16 +0000
+Subject: [PATCH 6/6] chore: remove orphaned Performance/Analysis components
+
+Delete 9 files that became unreachable when the Performance page
+was redesigned from a 6-tab layout to the 3-tab PerformancePanel:
+
+- analysis-panel.tsx (replaced by performance-panel.tsx)
+- override-roi.tsx (logic absorbed into tab-review.tsx)
+- team-form-card.tsx (never referenced in active code)
+- upcoming-assistant.tsx (replaced by key-insights-card.tsx)
+- tabs/tab-blind-spots.tsx
+- tabs/tab-decision-review.tsx
+- tabs/tab-engine-learning.tsx
+- tabs/tab-exact-score.tsx
+- tabs/tab-override-intelligence.tsx
+
+TypeScript clean, 160/160 tests pass, build clean.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RU92kjKaNM5o2ZXbwgeazK
+---
+ .../components/analysis/analysis-panel.tsx    | 609 ------------------
+ .../src/components/analysis/override-roi.tsx  | 211 ------
+ .../analysis/tabs/tab-blind-spots.tsx         | 121 ----
+ .../analysis/tabs/tab-decision-review.tsx     | 137 ----
+ .../analysis/tabs/tab-engine-learning.tsx     | 115 ----
+ .../analysis/tabs/tab-exact-score.tsx         | 131 ----
+ .../tabs/tab-override-intelligence.tsx        | 165 -----
+ .../components/analysis/team-form-card.tsx    | 201 ------
+ .../analysis/upcoming-assistant.tsx           | 235 -------
+ 9 files changed, 1925 deletions(-)
+ delete mode 100644 worldcup-app/src/components/analysis/analysis-panel.tsx
+ delete mode 100644 worldcup-app/src/components/analysis/override-roi.tsx
+ delete mode 100644 worldcup-app/src/components/analysis/tabs/tab-blind-spots.tsx
+ delete mode 100644 worldcup-app/src/components/analysis/tabs/tab-decision-review.tsx
+ delete mode 100644 worldcup-app/src/components/analysis/tabs/tab-engine-learning.tsx
+ delete mode 100644 worldcup-app/src/components/analysis/tabs/tab-exact-score.tsx
+ delete mode 100644 worldcup-app/src/components/analysis/tabs/tab-override-intelligence.tsx
+ delete mode 100644 worldcup-app/src/components/analysis/team-form-card.tsx
+ delete mode 100644 worldcup-app/src/components/analysis/upcoming-assistant.tsx
+
+diff --git a/worldcup-app/src/components/analysis/analysis-panel.tsx b/worldcup-app/src/components/analysis/analysis-panel.tsx
+deleted file mode 100644
+index 5be933c..0000000
+--- a/worldcup-app/src/components/analysis/analysis-panel.tsx
++++ /dev/null
+@@ -1,609 +0,0 @@
+-'use client'
+-import { useState, useEffect } from 'react'
+-import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions, getHumanPredictions, computeHumanBiasData, computeCalibration } from '@/lib/store'
+-import { getOutcome } from '@/lib/models'
+-import { formatDate, MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
+-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+-import { Badge } from '@/components/ui/badge'
+-import { TrendingUp, Target, CheckCircle, XCircle, Brain, Zap, ChevronDown, ChevronUp, Crosshair } from 'lucide-react'
+-import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
+-import { ModelHealth } from './model-health'
+-import { DisagreementAnalysis } from './disagreement-analysis'
+-import { UpcomingAssistant } from './upcoming-assistant'
+-import { DecisionEngine } from './decision-engine'
+-import { OverrideROI } from './override-roi'
+-
+-const MODELS = ['A', 'B', 'C'] as const
+-
+-function poolScore(predH: number, predA: number, actH: number, actA: number): number {
+-  if (predH === actH && predA === actA) return 4
+-  const predGD = predH - predA, actGD = actH - actA
+-  const predW = predGD > 0 ? 'H' : predGD < 0 ? 'A' : 'D'
+-  const actW  = actGD  > 0 ? 'H' : actGD  < 0 ? 'A' : 'D'
+-  if (predW === actW && predGD === actGD) return 2
+-  if (predW === actW) return 1
+-  return 0
+-}
+-
+-export function AnalysisPanel() {
+-  const [mounted, setMounted] = useState(false)
+-  const [showDebug, setShowDebug] = useState(false)
+-  useEffect(() => setMounted(true), [])
+-
+-  if (!mounted) return <div className="h-64 animate-pulse rounded-lg bg-zinc-100" />
+-
+-  const fixtures     = getFixtures()
+-  const teams        = getTeams()
+-  const results      = getResults()
+-  const lockedPreds  = getLockedPredictions()
+-  const allPreds     = getPredictions()
+-  const humanPredsList = getHumanPredictions()
+-  const calibration  = computeCalibration()
+-  const teamMap      = Object.fromEntries(teams.map(t => [t.id, t]))
+-
+-  // ── Per-match comparison ──────────────────────────────────────────────────
+-  const comparisons = results.flatMap(result => {
+-    const fixture = fixtures.find(f => f.id === result.fixture_id)
+-    if (!fixture) return []
+-    const home = teamMap[fixture.home_team_id]
+-    const away = teamMap[fixture.away_team_id]
+-    if (!home || !away) return []
+-    const locked = lockedPreds.find(p => p.fixture_id === result.fixture_id)
+-    const actualOutcome = getOutcome(result.home_goals, result.away_goals)
+-
+-    const modelData = Object.fromEntries(MODELS.map(m => {
+-      const pred = allPreds.find(p => p.fixture_id === result.fixture_id && p.model === m)
+-      if (!pred) return [m, null]
+-      return [m, {
+-        predHome: pred.home_goals,
+-        predAway: pred.away_goals,
+-        outcomeCorrect: getOutcome(pred.home_goals, pred.away_goals) === actualOutcome,
+-        goalErr: Math.abs(pred.home_goals - result.home_goals) + Math.abs(pred.away_goals - result.away_goals),
+-      }]
+-    }))
+-
+-    return [{
+-      fixtureId: fixture.id, date: fixture.kickoff_utc,
+-      homeTeam: home, awayTeam: away, group: fixture.group ?? '',
+-      lockedModel: locked?.model ?? null,
+-      actual: { home: result.home_goals, away: result.away_goals },
+-      models: modelData,
+-    }]
+-  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+-
+-  // ── Pool score breakdown from locked predictions ──────────────────────────
+-  const scoredPicks = lockedPreds.flatMap(lp => {
+-    const result = results.find(r => r.fixture_id === lp.fixture_id)
+-    if (!result) return []
+-    const rH = Math.round(lp.home_goals)
+-    const rA = Math.round(lp.away_goals)
+-    const pts = poolScore(rH, rA, result.home_goals, result.away_goals)
+-    const goalDeltaH = rH - result.home_goals
+-    const goalDeltaA = rA - result.away_goals
+-    return [{ pts, goalDeltaH, goalDeltaA }]
+-  })
+-  const totalScoredPicks = scoredPicks.length
+-  const exact    = scoredPicks.filter(p => p.pts === 4).length
+-  const winnerGD = scoredPicks.filter(p => p.pts === 2).length
+-  const winner   = scoredPicks.filter(p => p.pts === 1).length
+-  const wrong    = scoredPicks.filter(p => p.pts === 0).length
+-  const avgPts   = totalScoredPicks > 0
+-    ? scoredPicks.reduce((s, p) => s + p.pts, 0) / totalScoredPicks : 0
+-  const avgGoalBiasH = totalScoredPicks > 0
+-    ? scoredPicks.reduce((s, p) => s + p.goalDeltaH, 0) / totalScoredPicks : 0
+-  const avgGoalBiasA = totalScoredPicks > 0
+-    ? scoredPicks.reduce((s, p) => s + p.goalDeltaA, 0) / totalScoredPicks : 0
+-
+-  // ── Model leaderboard ─────────────────────────────────────────────────────
+-  const leaderboard = MODELS.map(m => {
+-    const entries = comparisons.map(c => c.models[m]).filter(Boolean)
+-    const correct = entries.filter(e => e!.outcomeCorrect).length
+-    return {
+-      model: m,
+-      matches: entries.length,
+-      correct,
+-      accuracy: entries.length > 0 ? correct / entries.length : 0,
+-      avgGoalErr: entries.length > 0 ? entries.reduce((s, e) => s + e!.goalErr, 0) / entries.length : 0,
+-    }
+-  }).sort((a, b) => b.accuracy - a.accuracy || a.avgGoalErr - b.avgGoalErr)
+-
+-  const bestModel = leaderboard[0]?.accuracy > 0 ? leaderboard[0].model : null
+-
+-  if (comparisons.length === 0) {
+-    return (
+-      <Card>
+-        <CardContent className="py-10 text-center">
+-          <Target className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
+-          <p className="text-sm font-medium text-zinc-500">No analysable data yet</p>
+-          <p className="mt-1 text-xs text-zinc-400">
+-            Go to Matches → lock a prediction → enter the actual score. Analysis will appear here.
+-          </p>
+-        </CardContent>
+-      </Card>
+-    )
+-  }
+-
+-  return (
+-    <div className="space-y-4">
+-      <SyncErrorBanner />
+-
+-      {/* ── 1. Pool Performance ──────────────────────────────────────────────── */}
+-      {(() => {
+-        const activeModel: 'A' | 'B' | 'C' = 'A'
+-        const pending = humanPredsList.filter(hp => !results.find(r => r.fixture_id === hp.fixture_id))
+-
+-        type OverrideRow = {
+-          fixtureId: string; homeTeam: typeof teamMap[string]; awayTeam: typeof teamMap[string]
+-          origHome: number; origAway: number; modelKey: string; noLock: boolean
+-          humanHome: number; humanAway: number
+-          actualHome: number; actualAway: number
+-          humanCorrect: boolean; modelCorrect: boolean
+-        }
+-        const completedRows: OverrideRow[] = humanPredsList.flatMap(hp => {
+-          const result = results.find(r => r.fixture_id === hp.fixture_id)
+-          if (!result) return []
+-          const fixture = fixtures.find(f => f.id === hp.fixture_id)
+-          if (!fixture) return []
+-          const home = teamMap[fixture.home_team_id]
+-          const away = teamMap[fixture.away_team_id]
+-          if (!home || !away) return []
+-          const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+-          const modelKey = (locked?.model as 'A' | 'B' | 'C' | undefined) || activeModel
+-          const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === modelKey)
+-          if (!origPred) return []
+-          const actualOutcome = getOutcome(result.home_goals, result.away_goals)
+-          return [{ fixtureId: fixture.id, homeTeam: home, awayTeam: away,
+-            origHome: origPred.home_goals, origAway: origPred.away_goals, modelKey, noLock: !locked,
+-            humanHome: hp.home_goals, humanAway: hp.away_goals,
+-            actualHome: result.home_goals, actualAway: result.away_goals,
+-            humanCorrect: getOutcome(hp.home_goals, hp.away_goals) === actualOutcome,
+-            modelCorrect: getOutcome(origPred.home_goals, origPred.away_goals) === actualOutcome,
+-          }]
+-        })
+-
+-        const youCorrect  = completedRows.filter(r => r.humanCorrect).length
+-        const modelCorrect = completedRows.filter(r => r.modelCorrect).length
+-        const youBeat     = completedRows.filter(r => r.humanCorrect && !r.modelCorrect).length
+-        const modelBeat   = completedRows.filter(r => r.modelCorrect && !r.humanCorrect).length
+-        const bothWrong   = completedRows.filter(r => !r.humanCorrect && !r.modelCorrect).length
+-        const fallbackCount = completedRows.filter(r => r.noLock).length
+-
+-        return (
+-          <Card>
+-            <CardHeader>
+-              <CardTitle className="flex items-center gap-1.5">
+-                <Zap className="h-3.5 w-3.5 text-blue-500" /> Pool Performance
+-              </CardTitle>
+-              <p className="text-xs text-zinc-400 mt-0.5">Your picks vs engine baseline. Pending matches excluded.</p>
+-            </CardHeader>
+-            <CardContent className="space-y-4">
+-              <div className="grid grid-cols-4 gap-2 text-center">
+-                <div className="rounded-lg bg-zinc-50 px-2 py-2">
+-                  <div className="text-xs text-zinc-400">Picks</div>
+-                  <div className="text-xl font-bold text-zinc-700">{humanPredsList.length}</div>
+-                </div>
+-                <div className="rounded-lg bg-zinc-50 px-2 py-2">
+-                  <div className="text-xs text-zinc-400">Completed</div>
+-                  <div className="text-xl font-bold text-zinc-700">{completedRows.length}</div>
+-                </div>
+-                <div className="rounded-lg bg-blue-50 px-2 py-2">
+-                  <div className="text-xs text-blue-500">You correct</div>
+-                  <div className="text-xl font-bold text-blue-700">{youCorrect}</div>
+-                </div>
+-                <div className="rounded-lg bg-zinc-50 px-2 py-2">
+-                  <div className="text-xs text-zinc-400">Engine correct</div>
+-                  <div className="text-xl font-bold text-zinc-700">{modelCorrect}</div>
+-                </div>
+-              </div>
+-              {completedRows.length > 0 && (
+-                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+-                  <div className="rounded bg-green-50 px-2 py-1.5">
+-                    <div className="text-green-600 font-semibold">{youBeat}</div>
+-                    <div className="text-green-700">You beat engine</div>
+-                  </div>
+-                  <div className="rounded bg-zinc-50 px-2 py-1.5">
+-                    <div className="text-zinc-600 font-semibold">{modelBeat}</div>
+-                    <div className="text-zinc-500">Engine beat you</div>
+-                  </div>
+-                  <div className="rounded bg-red-50 px-2 py-1.5">
+-                    <div className="text-red-500 font-semibold">{bothWrong}</div>
+-                    <div className="text-red-600">Both wrong</div>
+-                  </div>
+-                </div>
+-              )}
+-              {fallbackCount > 0 && (
+-                <p className="text-xs text-amber-600">
+-                  {fallbackCount} match{fallbackCount > 1 ? 'es' : ''}: no lock found — used Model {activeModel} as baseline.
+-                </p>
+-              )}
+-              {pending.length > 0 && (
+-                <p className="text-xs text-zinc-400">{pending.length} override{pending.length > 1 ? 's' : ''} pending result — not counted above.</p>
+-              )}
+-              {completedRows.length > 0 && (
+-                <div className="overflow-x-auto">
+-                  <table className="w-full text-xs">
+-                    <thead>
+-                      <tr className="border-b border-zinc-100 bg-zinc-50">
+-                        <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+-                        <th className="px-3 py-2 text-center font-medium text-zinc-500">Engine pred</th>
+-                        <th className="px-3 py-2 text-center font-medium text-zinc-500">You</th>
+-                        <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+-                        <th className="px-3 py-2 text-center font-medium text-zinc-500">Winner</th>
+-                      </tr>
+-                    </thead>
+-                    <tbody>
+-                      {completedRows.map(row => {
+-                        const whoWon = row.humanCorrect && row.modelCorrect ? 'both' : row.humanCorrect ? 'you' : row.modelCorrect ? 'model' : 'neither'
+-                        return (
+-                          <tr key={row.fixtureId} className="border-b border-zinc-50">
+-                            <td className="px-3 py-2.5 whitespace-nowrap">
+-                              {row.homeTeam.flag_url} {row.homeTeam.code} <span className="text-zinc-300">v</span> {row.awayTeam.code} {row.awayTeam.flag_url}
+-                            </td>
+-                            <td className="px-3 py-2.5 text-center font-mono text-zinc-500">
+-                              {row.origHome.toFixed(1)}–{row.origAway.toFixed(1)}
+-                              {row.noLock && <span className="ml-1 text-amber-400 text-[10px]">~{row.modelKey}</span>}
+-                            </td>
+-                            <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-600">{row.humanHome}–{row.humanAway}</td>
+-                            <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">{row.actualHome}–{row.actualAway}</td>
+-                            <td className="px-3 py-2.5 text-center">
+-                              {whoWon === 'both'    && <Badge variant="outline" className="text-green-600 border-green-300">Both</Badge>}
+-                              {whoWon === 'you'     && <Badge variant="outline" className="text-blue-600 border-blue-300">You ⚡</Badge>}
+-                              {whoWon === 'model'   && <Badge variant="outline" className="text-zinc-600">Engine</Badge>}
+-                              {whoWon === 'neither' && <Badge variant="outline" className="text-red-500 border-red-200">Neither</Badge>}
+-                            </td>
+-                          </tr>
+-                        )
+-                      })}
+-                    </tbody>
+-                  </table>
+-                </div>
+-              )}
+-            </CardContent>
+-          </Card>
+-        )
+-      })()}
+-
+-      {/* ── 2. Exact Score Diagnosis ─────────────────────────────────────────── */}
+-      {totalScoredPicks > 0 && (
+-        <Card>
+-          <CardHeader>
+-            <CardTitle className="flex items-center gap-1.5">
+-              <Crosshair className="h-3.5 w-3.5 text-zinc-500" /> Exact Score Diagnosis
+-            </CardTitle>
+-            <p className="text-xs text-zinc-400 mt-0.5">Pool point breakdown across {totalScoredPicks} completed locked pick{totalScoredPicks !== 1 ? 's' : ''}.</p>
+-          </CardHeader>
+-          <CardContent className="space-y-3">
+-            {/* Distribution bars */}
+-            <div className="space-y-2">
+-              {[
+-                { pts: 4, count: exact,    label: '4 pts · Exact',      bar: 'bg-green-500' },
+-                { pts: 2, count: winnerGD, label: '2 pts · Winner + GD', bar: 'bg-blue-400' },
+-                { pts: 1, count: winner,   label: '1 pt  · Winner',      bar: 'bg-amber-400' },
+-                { pts: 0, count: wrong,    label: '0 pts · Missed',      bar: 'bg-red-400'  },
+-              ].map(({ pts, count, label, bar }) => (
+-                <div key={pts} className="flex items-center gap-3">
+-                  <div className="w-32 shrink-0">
+-                    <span className="text-xs text-zinc-600">{label}</span>
+-                  </div>
+-                  <div className="flex-1 h-2 rounded-full bg-zinc-100 overflow-hidden">
+-                    <div
+-                      className={`h-full rounded-full ${bar} transition-all`}
+-                      style={{ width: totalScoredPicks > 0 ? `${(count / totalScoredPicks) * 100}%` : '0%' }}
+-                    />
+-                  </div>
+-                  <div className="w-16 text-right">
+-                    <span className="text-xs font-semibold text-zinc-700">{count}</span>
+-                    <span className="text-[10px] text-zinc-400 ml-1">({Math.round((count / totalScoredPicks) * 100)}%)</span>
+-                  </div>
+-                </div>
+-              ))}
+-            </div>
+-
+-            {/* Summary stats */}
+-            <div className="grid grid-cols-3 gap-3 border-t border-zinc-100 pt-3">
+-              <div className="text-center">
+-                <p className="text-[10px] uppercase tracking-wide text-zinc-400">Avg pts / match</p>
+-                <p className={`text-xl font-black tabular-nums ${avgPts >= 2 ? 'text-green-700' : avgPts >= 1 ? 'text-amber-600' : 'text-red-500'}`}>
+-                  {avgPts.toFixed(2)}
+-                </p>
+-              </div>
+-              <div className="text-center">
+-                <p className="text-[10px] uppercase tracking-wide text-zinc-400">Home goal bias</p>
+-                <p className={`text-xl font-black tabular-nums ${Math.abs(avgGoalBiasH) < 0.3 ? 'text-green-700' : 'text-amber-600'}`}>
+-                  {avgGoalBiasH >= 0 ? '+' : ''}{avgGoalBiasH.toFixed(2)}
+-                </p>
+-              </div>
+-              <div className="text-center">
+-                <p className="text-[10px] uppercase tracking-wide text-zinc-400">Away goal bias</p>
+-                <p className={`text-xl font-black tabular-nums ${Math.abs(avgGoalBiasA) < 0.3 ? 'text-green-700' : 'text-amber-600'}`}>
+-                  {avgGoalBiasA >= 0 ? '+' : ''}{avgGoalBiasA.toFixed(2)}
+-                </p>
+-              </div>
+-            </div>
+-            {(Math.abs(avgGoalBiasH) >= 0.3 || Math.abs(avgGoalBiasA) >= 0.3) && (
+-              <p className="text-[10px] text-amber-600">
+-                Goal bias detected — you{avgGoalBiasH > 0 ? ' over' : ' under'}-predict home goals by {Math.abs(avgGoalBiasH).toFixed(2)}/match.
+-                Consider adjusting custom picks.
+-              </p>
+-            )}
+-          </CardContent>
+-        </Card>
+-      )}
+-
+-      {/* ── 4. Override ROI ──────────────────────────────────────────────────── */}
+-      <OverrideROI />
+-
+-      {/* ── 5. Upcoming Risk Review ──────────────────────────────────────────── */}
+-      <UpcomingAssistant />
+-
+-      {/* ── 6. Model Debugging (collapsed by default) ────────────────────────── */}
+-      <Card>
+-        <button
+-          onClick={() => setShowDebug(v => !v)}
+-          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-zinc-50 transition-colors"
+-        >
+-          <div className="flex items-center gap-2">
+-            <Brain className="h-3.5 w-3.5 text-indigo-400" />
+-            <span className="text-sm font-semibold text-zinc-700">Engine Diagnostics</span>
+-            <span className="text-xs text-zinc-400">— Internal model breakdown, leaderboard, raw match data</span>
+-          </div>
+-          {showDebug ? <ChevronUp className="h-4 w-4 text-zinc-400" /> : <ChevronDown className="h-4 w-4 text-zinc-400" />}
+-        </button>
+-
+-        {showDebug && (
+-          <div className="border-t border-zinc-100 space-y-4 px-0 py-4">
+-
+-            {/* Decision Engine */}
+-            <div className="px-4">
+-              <DecisionEngine />
+-            </div>
+-
+-            <ModelHealth />
+-            <DisagreementAnalysis />
+-
+-            {/* Model Leaderboard */}
+-            <div>
+-              <div className="px-4 pb-2">
+-                <p className="text-sm font-semibold text-zinc-700 flex items-center gap-1.5">
+-                  <TrendingUp className="h-3.5 w-3.5" /> Model Leaderboard
+-                </p>
+-                <p className="text-xs text-zinc-400 mt-0.5">All 3 models scored against every played match.</p>
+-              </div>
+-              <div className="overflow-x-auto">
+-                <table className="w-full text-xs">
+-                  <thead>
+-                    <tr className="border-b border-zinc-100 bg-zinc-50">
+-                      <th className="px-4 py-2 text-left font-medium text-zinc-500">Rank</th>
+-                      <th className="px-4 py-2 text-left font-medium text-zinc-500">Model</th>
+-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Matches</th>
+-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Correct</th>
+-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Accuracy</th>
+-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Avg Goal Err</th>
+-                      <th className="px-4 py-2 text-center font-medium text-zinc-500">Calibration</th>
+-                    </tr>
+-                  </thead>
+-                  <tbody>
+-                    {leaderboard.map((s, i) => {
+-                      const cal = calibration.find(c => c.model === s.model)
+-                      const isLocked = comparisons.some(c => c.lockedModel === s.model)
+-                      return (
+-                        <tr key={s.model} className={`border-b border-zinc-50 ${i === 0 && s.accuracy > 0 ? 'bg-green-50' : ''}`}>
+-                          <td className="px-4 py-2.5 font-bold text-zinc-400">#{i + 1}</td>
+-                          <td className="px-4 py-2.5">
+-                            <div className="flex items-center gap-1.5">
+-                              <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-white text-xs ${MODEL_COLORS[s.model]}`}>
+-                                {MODEL_LABELS[s.model]}
+-                              </span>
+-                              {i === 0 && s.accuracy > 0 && <span className="text-xs text-green-600 font-medium">Best</span>}
+-                              {isLocked && <span className="text-xs text-zinc-400">← your choice</span>}
+-                            </div>
+-                          </td>
+-                          <td className="px-4 py-2.5 text-center text-zinc-700">{s.matches}</td>
+-                          <td className="px-4 py-2.5 text-center text-zinc-700">{s.correct}</td>
+-                          <td className="px-4 py-2.5 text-center font-semibold text-zinc-900">{Math.round(s.accuracy * 100)}%</td>
+-                          <td className="px-4 py-2.5 text-center">
+-                            <span className={s.avgGoalErr <= 1.5 ? 'text-green-600 font-medium' : s.avgGoalErr <= 2.5 ? 'text-yellow-600' : 'text-red-500'}>
+-                              {s.avgGoalErr.toFixed(2)}
+-                            </span>
+-                          </td>
+-                          <td className="px-4 py-2.5 text-center text-zinc-500">
+-                            {cal && cal.matchCount >= 3
+-                              ? `H×${cal.homeScale.toFixed(2)} A×${cal.awayScale.toFixed(2)}`
+-                              : <span className="text-zinc-300">need 3+</span>}
+-                          </td>
+-                        </tr>
+-                      )
+-                    })}
+-                  </tbody>
+-                </table>
+-              </div>
+-              {bestModel && (
+-                <div className="mx-4 mt-2 rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+-                  💡 Best performer: {MODEL_LABELS[bestModel]} — leading on accuracy across {comparisons.length} played matches.
+-                </div>
+-              )}
+-            </div>
+-
+-            {/* All models vs actual */}
+-            <div>
+-              <div className="px-4 pb-2">
+-                <p className="text-sm font-semibold text-zinc-700">All Models vs Actual</p>
+-                <p className="text-xs text-zinc-400 mt-0.5">Your locked model highlighted. ✓/✗ = outcome correct.</p>
+-              </div>
+-              <div className="overflow-x-auto">
+-                <table className="w-full text-xs">
+-                  <thead>
+-                    <tr className="border-b border-zinc-100 bg-zinc-50">
+-                      <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+-                      {MODELS.map(m => (
+-                        <th key={m} className="px-3 py-2 text-center font-medium text-zinc-500">{MODEL_LABELS[m]}</th>
+-                      ))}
+-                      <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+-                    </tr>
+-                  </thead>
+-                  <tbody>
+-                    {comparisons.map(row => (
+-                      <tr key={row.fixtureId} className="border-b border-zinc-50 hover:bg-zinc-50/50">
+-                        <td className="px-3 py-2.5">
+-                          <div className="flex items-center gap-1">
+-                            <span>{row.homeTeam.flag_url}</span>
+-                            <span className="font-medium text-zinc-900">{row.homeTeam.code}</span>
+-                            <span className="text-zinc-300">v</span>
+-                            <span className="font-medium text-zinc-900">{row.awayTeam.code}</span>
+-                            <span>{row.awayTeam.flag_url}</span>
+-                          </div>
+-                          <div className="text-zinc-400 mt-0.5">{formatDate(row.date)} · Grp {row.group}</div>
+-                        </td>
+-                        {MODELS.map(m => {
+-                          const d = row.models[m]
+-                          const isLocked = row.lockedModel === m
+-                          return (
+-                            <td key={m} className={`px-3 py-2.5 text-center ${isLocked ? 'bg-blue-50' : ''}`}>
+-                              {d ? (
+-                                <div className="flex flex-col items-center gap-0.5">
+-                                  <span className={`font-mono font-semibold ${isLocked ? 'text-blue-700' : 'text-zinc-500'}`}>
+-                                    {d.predHome.toFixed(1)}–{d.predAway.toFixed(1)}
+-                                  </span>
+-                                  <span>
+-                                    {d.outcomeCorrect
+-                                      ? <CheckCircle className="h-3 w-3 text-green-500 inline" />
+-                                      : <XCircle className="h-3 w-3 text-red-400 inline" />}
+-                                    {isLocked && <span className="ml-0.5 text-blue-400 text-xs">●</span>}
+-                                  </span>
+-                                </div>
+-                              ) : <span className="text-zinc-300">—</span>}
+-                            </td>
+-                          )
+-                        })}
+-                        <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">
+-                          {row.actual.home}–{row.actual.away}
+-                        </td>
+-                      </tr>
+-                    ))}
+-                  </tbody>
+-                </table>
+-              </div>
+-            </div>
+-
+-            {/* Human Override Learning */}
+-            {humanPredsList.length > 0 && (() => {
+-              const biasData = computeHumanBiasData()
+-              const completedCount = humanPredsList.filter(hp => results.find(r => r.fixture_id === hp.fixture_id)).length
+-              const showable = biasData.filter(b => b.qualified)
+-
+-              return (
+-                <div className="px-4 space-y-3">
+-                  <p className="text-sm font-semibold text-zinc-700 flex items-center gap-1.5">
+-                    <Brain className="h-3.5 w-3.5 text-indigo-500" /> Human Override Learning
+-                  </p>
+-                  {completedCount < 3 ? (
+-                    <div className="rounded-md bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
+-                      <p className="font-medium text-zinc-700 mb-1">Need more completed custom overrides</p>
+-                      <p>{completedCount} of 3 required. Learning activates at 3 total completed overrides.</p>
+-                    </div>
+-                  ) : showable.length === 0 ? (
+-                    <div className="rounded-md bg-zinc-50 px-3 py-2.5 text-xs text-zinc-500">
+-                      <p>Each team needs 2+ overrides to show a trend.{' '}
+-                        {biasData.length > 0 && `Current: ${biasData.map(b => `${b.teamId.toUpperCase()} (${b.samples})`).join(', ')}.`}
+-                      </p>
+-                    </div>
+-                  ) : (
+-                    <div className="space-y-2">
+-                      {showable.map(({ teamId, avg, samples, confidence }) => {
+-                        const team = teamMap[teamId]
+-                        return (
+-                          <div key={teamId} className="flex items-center gap-3">
+-                            <span className="text-sm">{team?.flag_url}</span>
+-                            <span className="text-xs font-medium text-zinc-900 w-24 truncate">{team?.name ?? teamId}</span>
+-                            <div className="flex-1 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+-                              <div className={`h-full rounded-full ${avg > 0 ? 'bg-blue-400' : 'bg-red-400'}`}
+-                                style={{ width: `${Math.min(100, Math.abs(avg) * 50)}%`, marginLeft: avg < 0 ? 'auto' : undefined }} />
+-                            </div>
+-                            <span className={`text-xs font-semibold tabular-nums w-16 text-right ${avg > 0 ? 'text-blue-600' : 'text-red-500'}`}>
+-                              {avg > 0 ? '+' : ''}{avg.toFixed(2)}
+-                            </span>
+-                            <span className={`text-xs w-20 text-right ${confidence === 'reliable' ? 'text-zinc-500' : 'text-amber-500'}`}>
+-                              {samples} pick{samples > 1 ? 's' : ''} · {confidence}
+-                            </span>
+-                          </div>
+-                        )
+-                      })}
+-                    </div>
+-                  )}
+-                  <details className="border-t border-zinc-100 pt-3">
+-                    <summary className="text-xs text-zinc-400 cursor-pointer hover:text-zinc-600 select-none">
+-                      All overrides ({humanPredsList.length}) — click to inspect
+-                    </summary>
+-                    <div className="mt-2 overflow-x-auto">
+-                      <table className="w-full text-xs">
+-                        <thead>
+-                          <tr className="border-b border-zinc-100 bg-zinc-50">
+-                            <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+-                            <th className="px-3 py-2 text-center font-medium text-zinc-500">Engine pred</th>
+-                            <th className="px-3 py-2 text-center font-medium text-zinc-500">Your pick</th>
+-                            <th className="px-3 py-2 text-center font-medium text-zinc-500">Δ goals</th>
+-                            <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+-                            <th className="px-3 py-2 text-left font-medium text-zinc-500">Status</th>
+-                          </tr>
+-                        </thead>
+-                        <tbody>
+-                          {humanPredsList.map(hp => {
+-                            const fixture = fixtures.find(f => f.id === hp.fixture_id)
+-                            if (!fixture) return null
+-                            const home = teamMap[fixture.home_team_id]
+-                            const away = teamMap[fixture.away_team_id]
+-                            const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+-                            const hasModel = locked && locked.model
+-                            const origPred = hasModel
+-                              ? allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === (locked.model as 'A' | 'B' | 'C'))
+-                              : null
+-                            const result = results.find(r => r.fixture_id === hp.fixture_id)
+-                            const dH = origPred ? hp.home_goals - origPred.home_goals : null
+-                            const dA = origPred ? hp.away_goals - origPred.away_goals : null
+-                            type Reason = 'resolved' | 'no locked prediction found' | 'model missing' | 'seed prediction missing'
+-                            const reason: Reason = !locked ? 'no locked prediction found'
+-                              : !hasModel ? 'model missing'
+-                              : !origPred ? 'seed prediction missing'
+-                              : 'resolved'
+-                            return (
+-                              <tr key={hp.fixture_id} className={`border-b border-zinc-50 ${reason !== 'resolved' ? 'bg-amber-50/30' : ''}`}>
+-                                <td className="px-3 py-2 whitespace-nowrap">
+-                                  {home?.flag_url} {home?.code} v {away?.code} {away?.flag_url}
+-                                </td>
+-                                <td className="px-3 py-2 text-center font-mono text-zinc-400">
+-                                  {origPred ? `${origPred.home_goals.toFixed(1)}–${origPred.away_goals.toFixed(1)}` : <span className="text-zinc-300">—</span>}
+-                                </td>
+-                                <td className="px-3 py-2 text-center font-mono font-semibold text-blue-600">
+-                                  {hp.home_goals}–{hp.away_goals}
+-                                </td>
+-                                <td className="px-3 py-2 text-center font-mono">
+-                                  {dH != null && dA != null ? (
+-                                    <span className={dH + dA > 0 ? 'text-blue-500' : dH + dA < 0 ? 'text-red-500' : 'text-zinc-400'}>
+-                                      {dH >= 0 ? '+' : ''}{dH.toFixed(1)} / {dA >= 0 ? '+' : ''}{dA.toFixed(1)}
+-                                    </span>
+-                                  ) : <span className="text-zinc-300">—</span>}
+-                                </td>
+-                                <td className="px-3 py-2 text-center font-mono font-bold text-zinc-900">
+-                                  {result ? `${result.home_goals}–${result.away_goals}` : <span className="text-zinc-300">pending</span>}
+-                                </td>
+-                                <td className="px-3 py-2">
+-                                  {reason === 'resolved'
+-                                    ? <span className="text-green-600">resolved</span>
+-                                    : <span className="text-amber-600">{reason}</span>}
+-                                </td>
+-                              </tr>
+-                            )
+-                          })}
+-                        </tbody>
+-                      </table>
+-                    </div>
+-                  </details>
+-                </div>
+-              )
+-            })()}
+-          </div>
+-        )}
+-      </Card>
+-    </div>
+-  )
+-}
+diff --git a/worldcup-app/src/components/analysis/override-roi.tsx b/worldcup-app/src/components/analysis/override-roi.tsx
+deleted file mode 100644
+index 63f2f77..0000000
+--- a/worldcup-app/src/components/analysis/override-roi.tsx
++++ /dev/null
+@@ -1,211 +0,0 @@
+-'use client'
+-import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations } from '@/lib/store'
+-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+-import { TrendingUp } from 'lucide-react'
+-
+-function poolScore(predH: number, predA: number, actH: number, actA: number): number {
+-  if (predH === actH && predA === actA) return 4
+-  const predGD = predH - predA
+-  const actGD  = actH  - actA
+-  const predW  = predGD > 0 ? 'H' : predGD < 0 ? 'A' : 'D'
+-  const actW   = actGD  > 0 ? 'H' : actGD  < 0 ? 'A' : 'D'
+-  if (predW === actW && predGD === actGD) return 2
+-  if (predW === actW) return 1
+-  return 0
+-}
+-
+-function pts(n: number) {
+-  return n === 1 ? '1 pt' : `${n} pts`
+-}
+-
+-const DELTA_STYLE: Record<string, string> = {
+-  pos: 'text-green-600 font-semibold',
+-  neg: 'text-red-500 font-semibold',
+-  zero: 'text-zinc-400',
+-}
+-
+-export function OverrideROI() {
+-  const fixtures    = getFixtures()
+-  const teams       = getTeams()
+-  const results     = getResults()
+-  const lockedPreds = getLockedPredictions()
+-  const poolRecs    = getPoolRecommendations()
+-  const teamMap     = Object.fromEntries(teams.map(t => [t.id, t]))
+-  const resultMap   = Object.fromEntries(results.map(r => [r.fixture_id, r]))
+-
+-  type Row = {
+-    fixtureId: string
+-    homeCode: string
+-    awayCode: string
+-    recHome: number
+-    recAway: number
+-    lockedHome: number
+-    lockedAway: number
+-    actualHome: number
+-    actualAway: number
+-    recPts: number
+-    myPts: number
+-    delta: number
+-    source: string
+-  }
+-
+-  const rows: Row[] = []
+-
+-  for (const rec of poolRecs) {
+-    const result = resultMap[rec.fixture_id]
+-    if (!result) continue  // pending — skip
+-
+-    const locked = lockedPreds.find(p => p.fixture_id === rec.fixture_id)
+-    if (!locked) continue  // no locked pick — skip
+-
+-    const fixture = fixtures.find(f => f.id === rec.fixture_id)
+-    if (!fixture) continue
+-
+-    const home = teamMap[fixture.home_team_id]
+-    const away = teamMap[fixture.away_team_id]
+-
+-    const recPts = poolScore(rec.recommended_home, rec.recommended_away, result.home_goals, result.away_goals)
+-    const myPts  = poolScore(locked.home_goals, locked.away_goals, result.home_goals, result.away_goals)
+-
+-    rows.push({
+-      fixtureId: rec.fixture_id,
+-      homeCode: home?.code ?? fixture.home_team_id,
+-      awayCode: away?.code ?? fixture.away_team_id,
+-      recHome: rec.recommended_home,
+-      recAway: rec.recommended_away,
+-      lockedHome: locked.home_goals,
+-      lockedAway: locked.away_goals,
+-      actualHome: result.home_goals,
+-      actualAway: result.away_goals,
+-      recPts,
+-      myPts,
+-      delta: myPts - recPts,
+-      source: locked.pick_source ?? 'unknown',
+-    })
+-  }
+-
+-  if (rows.length === 0) {
+-    return (
+-      <Card>
+-        <CardHeader>
+-          <CardTitle className="flex items-center gap-1.5 text-sm">
+-            <TrendingUp className="h-3.5 w-3.5 text-indigo-500" /> Override ROI
+-          </CardTitle>
+-          <p className="text-xs text-zinc-400 mt-0.5">Pool recommendation vs your locked pick, scored by pool rules.</p>
+-        </CardHeader>
+-        <CardContent>
+-          <p className="text-xs text-zinc-400 py-2">
+-            No completed matches with both a pool recommendation and a locked pick yet.
+-            Lock picks via the Dashboard and enter results to see ROI.
+-          </p>
+-        </CardContent>
+-      </Card>
+-    )
+-  }
+-
+-  const totalRecPts = rows.reduce((s, r) => s + r.recPts, 0)
+-  const totalMyPts  = rows.reduce((s, r) => s + r.myPts,  0)
+-  const netGain     = totalMyPts - totalRecPts
+-  const overrides   = rows.filter(r => r.source === 'custom').length
+-  const accepted    = rows.filter(r => r.source === 'pool_recommendation').length
+-
+-  return (
+-    <Card>
+-      <CardHeader>
+-        <CardTitle className="flex items-center gap-1.5 text-sm">
+-          <TrendingUp className="h-3.5 w-3.5 text-indigo-500" /> Override ROI
+-        </CardTitle>
+-        <p className="text-xs text-zinc-400 mt-0.5">Pool recommendation vs your locked pick — {rows.length} completed match{rows.length !== 1 ? 'es' : ''}</p>
+-      </CardHeader>
+-      <CardContent className="space-y-4">
+-
+-        {/* Summary strip */}
+-        <div className="grid grid-cols-4 gap-2 text-center">
+-          <div className="rounded-lg bg-zinc-50 px-2 py-2.5">
+-            <p className="text-xs text-zinc-400">Rec total</p>
+-            <p className="text-lg font-bold text-zinc-700">{totalRecPts}</p>
+-            <p className="text-xs text-zinc-400">pts</p>
+-          </div>
+-          <div className="rounded-lg bg-blue-50 px-2 py-2.5">
+-            <p className="text-xs text-blue-500">My total</p>
+-            <p className="text-lg font-bold text-blue-700">{totalMyPts}</p>
+-            <p className="text-xs text-blue-400">pts</p>
+-          </div>
+-          <div className={`rounded-lg px-2 py-2.5 ${netGain > 0 ? 'bg-green-50' : netGain < 0 ? 'bg-red-50' : 'bg-zinc-50'}`}>
+-            <p className={`text-xs ${netGain > 0 ? 'text-green-600' : netGain < 0 ? 'text-red-500' : 'text-zinc-400'}`}>Net gain</p>
+-            <p className={`text-lg font-bold ${netGain > 0 ? 'text-green-700' : netGain < 0 ? 'text-red-600' : 'text-zinc-500'}`}>
+-              {netGain > 0 ? '+' : ''}{netGain}
+-            </p>
+-            <p className={`text-xs ${netGain > 0 ? 'text-green-500' : netGain < 0 ? 'text-red-400' : 'text-zinc-400'}`}>pts</p>
+-          </div>
+-          <div className="rounded-lg bg-zinc-50 px-2 py-2.5">
+-            <p className="text-xs text-zinc-400">Overrides</p>
+-            <p className="text-lg font-bold text-zinc-700">{overrides}</p>
+-            <p className="text-xs text-zinc-400">of {rows.length}</p>
+-          </div>
+-        </div>
+-
+-        {(accepted > 0 || overrides > 0) && (
+-          <p className="text-xs text-zinc-400">
+-            {accepted} accepted pool pick{accepted !== 1 ? 's' : ''} · {overrides} custom override{overrides !== 1 ? 's' : ''}
+-            {netGain > 0
+-              ? ` — overrides gained +${netGain} pts vs following recommendations`
+-              : netGain < 0
+-              ? ` — overrides cost ${Math.abs(netGain)} pts vs following recommendations`
+-              : ' — overrides broke even vs recommendations'}
+-          </p>
+-        )}
+-
+-        {/* Per-match table */}
+-        <div className="overflow-x-auto">
+-          <table className="w-full text-xs">
+-            <thead>
+-              <tr className="border-b border-zinc-100 bg-zinc-50">
+-                <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+-                <th className="px-3 py-2 text-center font-medium text-zinc-500">Rec</th>
+-                <th className="px-3 py-2 text-center font-medium text-zinc-500">My Pick</th>
+-                <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+-                <th className="px-3 py-2 text-center font-medium text-zinc-500">Rec pts</th>
+-                <th className="px-3 py-2 text-center font-medium text-zinc-500">My pts</th>
+-                <th className="px-3 py-2 text-center font-medium text-zinc-500">Δ</th>
+-              </tr>
+-            </thead>
+-            <tbody>
+-              {rows.map(row => {
+-                const deltaStyle = row.delta > 0 ? DELTA_STYLE.pos : row.delta < 0 ? DELTA_STYLE.neg : DELTA_STYLE.zero
+-                const isOverride = row.source === 'custom'
+-                return (
+-                  <tr key={row.fixtureId} className={`border-b border-zinc-50 ${isOverride ? 'bg-amber-50/40' : ''}`}>
+-                    <td className="px-3 py-2.5 whitespace-nowrap">
+-                      <span className="font-medium text-zinc-900">{row.homeCode}</span>
+-                      <span className="text-zinc-300 mx-1">v</span>
+-                      <span className="font-medium text-zinc-900">{row.awayCode}</span>
+-                      {isOverride && (
+-                        <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] text-amber-700 font-medium">override</span>
+-                      )}
+-                    </td>
+-                    <td className="px-3 py-2.5 text-center font-mono text-zinc-500">
+-                      {row.recHome}–{row.recAway}
+-                    </td>
+-                    <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-700">
+-                      {row.lockedHome}–{row.lockedAway}
+-                    </td>
+-                    <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">
+-                      {row.actualHome}–{row.actualAway}
+-                    </td>
+-                    <td className="px-3 py-2.5 text-center text-zinc-500">{pts(row.recPts)}</td>
+-                    <td className="px-3 py-2.5 text-center font-semibold text-blue-700">{pts(row.myPts)}</td>
+-                    <td className={`px-3 py-2.5 text-center ${deltaStyle}`}>
+-                      {row.delta > 0 ? `+${row.delta}` : row.delta < 0 ? `${row.delta}` : '—'}
+-                    </td>
+-                  </tr>
+-                )
+-              })}
+-            </tbody>
+-          </table>
+-        </div>
+-
+-      </CardContent>
+-    </Card>
+-  )
+-}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-blind-spots.tsx b/worldcup-app/src/components/analysis/tabs/tab-blind-spots.tsx
+deleted file mode 100644
+index 46d33a7..0000000
+--- a/worldcup-app/src/components/analysis/tabs/tab-blind-spots.tsx
++++ /dev/null
+@@ -1,121 +0,0 @@
+-'use client'
+-import { useMemo } from 'react'
+-import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions } from '@/lib/store'
+-import { generateAllReviews } from '@/lib/match-review'
+-import { buildBlindSpotProfile } from '@/lib/failure-classifier'
+-import { buildTeamAdjustments } from '@/lib/learning-layer'
+-import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
+-import { Eye } from 'lucide-react'
+-
+-const CATEGORY_LABELS: Record<string, string> = {
+-  over_predicted_goals:          'Over-predicted goals',
+-  favourite_overestimated:       'Favourite overestimated',
+-  qualification_pressure_ignored:'Qualification pressure ignored',
+-  away_attack_underestimated:    'Away attack underestimated',
+-  home_attack_underestimated:    'Home attack underestimated',
+-  defensive_improvement_ignored: 'Defensive improvement ignored',
+-  random_variance:               'Random variance',
+-  correct:                       'Correct',
+-}
+-
+-const BAR_COLOR: Record<string, string> = {
+-  over_predicted_goals:           'bg-amber-400',
+-  favourite_overestimated:        'bg-red-400',
+-  qualification_pressure_ignored: 'bg-orange-400',
+-  away_attack_underestimated:     'bg-purple-400',
+-  home_attack_underestimated:     'bg-indigo-400',
+-  defensive_improvement_ignored:  'bg-blue-400',
+-  random_variance:                'bg-zinc-300',
+-  correct:                        'bg-green-400',
+-}
+-
+-export function TabBlindSpots() {
+-  const { profile, total } = useMemo(() => {
+-    const fixtures = getFixtures()
+-    const teams = getTeams()
+-    const results = getResults()
+-    const locked = getLockedPredictions()
+-    const recs = getPoolRecommendations()
+-    const human = getHumanPredictions()
+-    const preds = getPredictions()
+-    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
+-    const standings = computeGroupStandings(fixtures, results)
+-
+-    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
+-    for (const ts of Object.values(standings)) {
+-      for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
+-    }
+-
+-    const reviews = generateAllReviews({
+-      fixtures, teams, lockedPredictions: locked,
+-      poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
+-    })
+-
+-    const profile = buildBlindSpotProfile(reviews.map(r => ({ category: r.blindSpot })))
+-    const total = reviews.length
+-
+-    return { profile, total }
+-  }, [])
+-
+-  if (total === 0) {
+-    return (
+-      <div className="py-12 text-center">
+-        <Eye className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
+-        <p className="text-sm text-zinc-500">No match data yet.</p>
+-      </div>
+-    )
+-  }
+-
+-  // Split correct/failures
+-  const failures = profile.filter(p => p.category !== 'correct')
+-  const correctEntry = profile.find(p => p.category === 'correct')
+-
+-  return (
+-    <div className="space-y-5">
+-      {/* Accuracy headline */}
+-      <div className="grid grid-cols-2 gap-3">
+-        <div className="rounded-lg bg-green-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Engine correct</p>
+-          <p className="text-2xl font-black text-green-700">{correctEntry?.count ?? 0}</p>
+-          <p className="text-xs text-zinc-400">{correctEntry?.pct ?? 0}% of matches</p>
+-        </div>
+-        <div className="rounded-lg bg-red-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Engine missed</p>
+-          <p className="text-2xl font-black text-red-600">{total - (correctEntry?.count ?? 0)}</p>
+-          <p className="text-xs text-zinc-400">across {failures.length} pattern{failures.length !== 1 ? 's' : ''}</p>
+-        </div>
+-      </div>
+-
+-      {/* Failure breakdown */}
+-      {failures.length > 0 && (
+-        <div className="space-y-2.5">
+-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Failure patterns (engine errors only)</p>
+-          {failures.map(p => (
+-            <div key={p.category} className="space-y-1">
+-              <div className="flex justify-between text-xs">
+-                <span className="text-zinc-700 font-medium">{CATEGORY_LABELS[p.category] ?? p.category}</span>
+-                <span className="text-zinc-500">{p.count} ({p.pct}%)</span>
+-              </div>
+-              <div className="h-2 rounded-full bg-zinc-100 overflow-hidden">
+-                <div
+-                  className={`h-full rounded-full transition-all ${BAR_COLOR[p.category] ?? 'bg-zinc-400'}`}
+-                  style={{ width: `${p.pct}%` }}
+-                />
+-              </div>
+-            </div>
+-          ))}
+-        </div>
+-      )}
+-
+-      {failures.length === 0 && (
+-        <div className="rounded-lg bg-green-50 px-4 py-4 text-center text-sm text-green-700">
+-          No failure patterns detected — all classified matches were correct.
+-        </div>
+-      )}
+-
+-      <p className="text-[10px] text-zinc-400">
+-        Based on {total} classified match{total !== 1 ? 'es' : ''}. Patterns drive learning signals once 3+ occur.
+-      </p>
+-    </div>
+-  )
+-}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-decision-review.tsx b/worldcup-app/src/components/analysis/tabs/tab-decision-review.tsx
+deleted file mode 100644
+index e6f9df3..0000000
+--- a/worldcup-app/src/components/analysis/tabs/tab-decision-review.tsx
++++ /dev/null
+@@ -1,137 +0,0 @@
+-'use client'
+-import { useMemo } from 'react'
+-import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions } from '@/lib/store'
+-import { generateAllReviews } from '@/lib/match-review'
+-import { buildTeamAdjustments } from '@/lib/learning-layer'
+-import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
+-import { getPredictions } from '@/lib/store'
+-import { Target } from 'lucide-react'
+-import { Badge } from '@/components/ui/badge'
+-
+-const VERDICT_STYLE: Record<string, string> = {
+-  'Override succeeded': 'text-green-700 border-green-300 bg-green-50',
+-  'Override failed':    'text-red-600 border-red-300 bg-red-50',
+-  'Both matched':       'text-blue-700 border-blue-300 bg-blue-50',
+-  'Both missed':        'text-zinc-500 border-zinc-200 bg-zinc-50',
+-  'Accepted rec':       'text-zinc-600 border-zinc-200',
+-  'No rec available':   'text-zinc-400 border-zinc-100',
+-}
+-
+-export function TabDecisionReview() {
+-  const reviews = useMemo(() => {
+-    const fixtures = getFixtures()
+-    const teams = getTeams()
+-    const results = getResults()
+-    const locked = getLockedPredictions()
+-    const recs = getPoolRecommendations()
+-    const human = getHumanPredictions()
+-    const preds = getPredictions()
+-    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
+-    const standings = computeGroupStandings(fixtures, results)
+-
+-    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
+-    for (const teamStandings of Object.values(standings)) {
+-      for (const s of teamStandings) {
+-        qualMap[s.teamId] = computeQualificationStatus(s.teamId, teamStandings, s.played)
+-      }
+-    }
+-
+-    return generateAllReviews({
+-      fixtures, teams, lockedPredictions: locked,
+-      poolRecommendations: recs, results, adjustments, qualMap,
+-      humanPredictions: human,
+-    })
+-  }, [])
+-
+-  if (reviews.length === 0) {
+-    return (
+-      <div className="py-12 text-center">
+-        <Target className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
+-        <p className="text-sm text-zinc-500">No completed matches to review yet.</p>
+-        <p className="mt-1 text-xs text-zinc-400">Lock a prediction, then enter the actual score on the Matches page.</p>
+-      </div>
+-    )
+-  }
+-
+-  const totalPts = reviews.reduce((s, r) => s + r.myPts, 0)
+-  const enginePts = reviews.reduce((s, r) => s + (r.enginePts ?? 0), 0)
+-  const delta = totalPts - enginePts
+-
+-  return (
+-    <div className="space-y-4">
+-      {/* Summary strip */}
+-      <div className="grid grid-cols-3 gap-3">
+-        <div className="rounded-lg bg-zinc-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Your pts</p>
+-          <p className="text-2xl font-black text-zinc-900">{totalPts}</p>
+-        </div>
+-        <div className="rounded-lg bg-zinc-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Engine pts</p>
+-          <p className="text-2xl font-black text-zinc-700">{enginePts}</p>
+-        </div>
+-        <div className={`rounded-lg p-3 text-center ${delta > 0 ? 'bg-green-50' : delta < 0 ? 'bg-red-50' : 'bg-zinc-50'}`}>
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Delta</p>
+-          <p className={`text-2xl font-black ${delta > 0 ? 'text-green-700' : delta < 0 ? 'text-red-600' : 'text-zinc-500'}`}>
+-            {delta > 0 ? '+' : ''}{delta}
+-          </p>
+-        </div>
+-      </div>
+-
+-      {/* Match rows */}
+-      <div className="overflow-x-auto rounded-lg border border-zinc-100">
+-        <table className="w-full text-xs">
+-          <thead>
+-            <tr className="border-b border-zinc-100 bg-zinc-50">
+-              <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+-              <th className="px-3 py-2 text-center font-medium text-zinc-500">Engine</th>
+-              <th className="px-3 py-2 text-center font-medium text-zinc-500">Your pick</th>
+-              <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+-              <th className="px-3 py-2 text-center font-medium text-zinc-500">Pts</th>
+-              <th className="px-3 py-2 text-center font-medium text-zinc-500">Verdict</th>
+-            </tr>
+-          </thead>
+-          <tbody>
+-            {reviews.map(r => (
+-              <tr key={r.fixtureId} className="border-b border-zinc-50 hover:bg-zinc-50/50">
+-                <td className="px-3 py-2.5 font-medium text-zinc-900 whitespace-nowrap">
+-                  {r.homeCode} <span className="text-zinc-300">v</span> {r.awayCode}
+-                </td>
+-                <td className="px-3 py-2.5 text-center font-mono text-zinc-400">
+-                  {r.engineH != null ? `${r.engineH}–${r.engineA}` : '—'}
+-                </td>
+-                <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-700">
+-                  {r.myH}–{r.myA}
+-                </td>
+-                <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">
+-                  {r.actualH}–{r.actualA}
+-                </td>
+-                <td className="px-3 py-2.5 text-center">
+-                  <span className={`font-bold text-sm ${r.myPts === 4 ? 'text-green-700' : r.myPts === 2 ? 'text-blue-600' : r.myPts === 1 ? 'text-amber-600' : 'text-red-500'}`}>
+-                    {r.myPts}
+-                  </span>
+-                </td>
+-                <td className="px-3 py-2.5 text-center">
+-                  <Badge variant="outline" className={`text-[10px] ${VERDICT_STYLE[r.verdict] ?? ''}`}>
+-                    {r.verdict}
+-                  </Badge>
+-                </td>
+-              </tr>
+-            ))}
+-          </tbody>
+-        </table>
+-      </div>
+-
+-      {/* Lessons */}
+-      {reviews.some(r => r.lesson) && (
+-        <div className="space-y-1.5">
+-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Lessons</p>
+-          {reviews.filter(r => r.lesson).map(r => (
+-            <div key={r.fixtureId} className="rounded bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+-              <span className="font-medium text-zinc-900">{r.homeCode} v {r.awayCode}:</span> {r.lesson}
+-            </div>
+-          ))}
+-        </div>
+-      )}
+-    </div>
+-  )
+-}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-engine-learning.tsx b/worldcup-app/src/components/analysis/tabs/tab-engine-learning.tsx
+deleted file mode 100644
+index 9ee3e5a..0000000
+--- a/worldcup-app/src/components/analysis/tabs/tab-engine-learning.tsx
++++ /dev/null
+@@ -1,115 +0,0 @@
+-'use client'
+-import { useMemo } from 'react'
+-import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions } from '@/lib/store'
+-import { generateAllReviews } from '@/lib/match-review'
+-import { generateLearningSignals } from '@/lib/learning-signals'
+-import { buildTeamAdjustments } from '@/lib/learning-layer'
+-import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
+-import { Brain } from 'lucide-react'
+-import { Badge } from '@/components/ui/badge'
+-
+-const STRENGTH_STYLE: Record<string, string> = {
+-  Strong:   'bg-green-100 text-green-800 border-green-200',
+-  Moderate: 'bg-amber-100 text-amber-800 border-amber-200',
+-  Weak:     'bg-zinc-100 text-zinc-600 border-zinc-200',
+-}
+-
+-export function TabEngineLearning() {
+-  const signals = useMemo(() => {
+-    const fixtures = getFixtures()
+-    const teams = getTeams()
+-    const results = getResults()
+-    const locked = getLockedPredictions()
+-    const recs = getPoolRecommendations()
+-    const human = getHumanPredictions()
+-    const preds = getPredictions()
+-    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
+-    const standings = computeGroupStandings(fixtures, results)
+-
+-    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
+-    for (const ts of Object.values(standings)) {
+-      for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
+-    }
+-
+-    const reviews = generateAllReviews({
+-      fixtures, teams, lockedPredictions: locked,
+-      poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
+-    })
+-
+-    return generateLearningSignals(reviews)
+-  }, [])
+-
+-  if (signals.length === 0) {
+-    return (
+-      <div className="py-12 text-center">
+-        <Brain className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
+-        <p className="text-sm text-zinc-500">Not enough match data to derive learning signals yet.</p>
+-        <p className="mt-1 text-xs text-zinc-400">Signals appear after 3+ matches with the same failure pattern.</p>
+-      </div>
+-    )
+-  }
+-
+-  const active = signals.filter(s => s.appliedToRecs)
+-  const inactive = signals.filter(s => !s.appliedToRecs)
+-
+-  return (
+-    <div className="space-y-5">
+-      <div className="grid grid-cols-3 gap-3 text-center">
+-        <div className="rounded-lg bg-zinc-50 p-3">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Total signals</p>
+-          <p className="text-2xl font-black text-zinc-900">{signals.length}</p>
+-        </div>
+-        <div className="rounded-lg bg-green-50 p-3">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Applied</p>
+-          <p className="text-2xl font-black text-green-700">{active.length}</p>
+-        </div>
+-        <div className="rounded-lg bg-zinc-50 p-3">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Monitoring</p>
+-          <p className="text-2xl font-black text-zinc-600">{inactive.length}</p>
+-        </div>
+-      </div>
+-
+-      {active.length > 0 && (
+-        <div className="space-y-2">
+-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Applied to recommendations</p>
+-          {active.map(sig => (
+-            <SignalCard key={sig.id} sig={sig} />
+-          ))}
+-        </div>
+-      )}
+-
+-      {inactive.length > 0 && (
+-        <div className="space-y-2">
+-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Monitoring (not yet applied)</p>
+-          {inactive.map(sig => (
+-            <SignalCard key={sig.id} sig={sig} />
+-          ))}
+-        </div>
+-      )}
+-    </div>
+-  )
+-}
+-
+-function SignalCard({ sig }: { sig: import('@/lib/learning-signals').LearningSignal }) {
+-  const ptsSign = sig.avgPtsImprovement >= 0 ? '+' : ''
+-  return (
+-    <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-4 py-3 space-y-1.5">
+-      <div className="flex items-center justify-between gap-2">
+-        <span className="text-xs font-semibold text-zinc-900">{sig.lesson}</span>
+-        <Badge variant="outline" className={`text-[10px] shrink-0 ${STRENGTH_STYLE[sig.strength] ?? ''}`}>
+-          {sig.strength}
+-        </Badge>
+-      </div>
+-      <div className="flex gap-4 text-[10px] text-zinc-500">
+-        <span>{sig.occurrences} occurrences</span>
+-        <span>Confidence: {sig.confidence}</span>
+-        <span>Avg Δpts: <span className={sig.avgPtsImprovement > 0 ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>
+-          {ptsSign}{sig.avgPtsImprovement.toFixed(2)}
+-        </span></span>
+-        <span className={sig.appliedToRecs ? 'text-green-600 font-medium' : 'text-zinc-400'}>
+-          {sig.appliedToRecs ? '✓ active' : 'monitoring'}
+-        </span>
+-      </div>
+-    </div>
+-  )
+-}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-exact-score.tsx b/worldcup-app/src/components/analysis/tabs/tab-exact-score.tsx
+deleted file mode 100644
+index 99efbce..0000000
+--- a/worldcup-app/src/components/analysis/tabs/tab-exact-score.tsx
++++ /dev/null
+@@ -1,131 +0,0 @@
+-'use client'
+-import { useMemo } from 'react'
+-import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions } from '@/lib/store'
+-import { generateAllReviews } from '@/lib/match-review'
+-import { buildExactScoreProfile } from '@/lib/exact-score-analysis'
+-import { buildTeamAdjustments } from '@/lib/learning-layer'
+-import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
+-import { Crosshair } from 'lucide-react'
+-
+-export function TabExactScore() {
+-  const { profile, total } = useMemo(() => {
+-    const fixtures = getFixtures()
+-    const teams = getTeams()
+-    const results = getResults()
+-    const locked = getLockedPredictions()
+-    const recs = getPoolRecommendations()
+-    const human = getHumanPredictions()
+-    const preds = getPredictions()
+-    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
+-    const standings = computeGroupStandings(fixtures, results)
+-
+-    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
+-    for (const ts of Object.values(standings)) {
+-      for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
+-    }
+-
+-    const reviews = generateAllReviews({
+-      fixtures, teams, lockedPredictions: locked,
+-      poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
+-    })
+-
+-    return { profile: buildExactScoreProfile(reviews), total: reviews.length }
+-  }, [])
+-
+-  if (total === 0) {
+-    return (
+-      <div className="py-12 text-center">
+-        <Crosshair className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
+-        <p className="text-sm text-zinc-500">No completed matches yet.</p>
+-      </div>
+-    )
+-  }
+-
+-  const { distribution: d, avgPts, homeGoalBias, awayGoalBias, missedPatterns, topMissedPattern } = profile
+-
+-  const bars = [
+-    { pts: 4, count: d.exact,    label: '4 pts · Exact score',       bar: 'bg-green-500' },
+-    { pts: 2, count: d.gdWin,    label: '2 pts · Winner + GD',        bar: 'bg-blue-400' },
+-    { pts: 1, count: d.winOnly,  label: '1 pt  · Correct winner',     bar: 'bg-amber-400' },
+-    { pts: 0, count: d.miss,     label: '0 pts · Missed',             bar: 'bg-red-400' },
+-  ]
+-
+-  return (
+-    <div className="space-y-5">
+-      {/* Point distribution */}
+-      <div className="space-y-2.5">
+-        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+-          Pool point distribution ({d.total} picks)
+-        </p>
+-        {bars.map(({ pts, count, label, bar }) => (
+-          <div key={pts} className="flex items-center gap-3">
+-            <span className="w-36 shrink-0 text-xs text-zinc-600">{label}</span>
+-            <div className="flex-1 h-2.5 rounded-full bg-zinc-100 overflow-hidden">
+-              <div
+-                className={`h-full rounded-full transition-all ${bar}`}
+-                style={{ width: d.total > 0 ? `${(count / d.total) * 100}%` : '0%' }}
+-              />
+-            </div>
+-            <span className="w-16 text-right text-xs font-semibold text-zinc-700">
+-              {count} <span className="font-normal text-zinc-400">({Math.round((count / d.total) * 100)}%)</span>
+-            </span>
+-          </div>
+-        ))}
+-      </div>
+-
+-      {/* Stats */}
+-      <div className="grid grid-cols-3 gap-3">
+-        <div className="rounded-lg bg-zinc-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Avg pts / match</p>
+-          <p className={`text-2xl font-black ${avgPts >= 2 ? 'text-green-700' : avgPts >= 1 ? 'text-amber-600' : 'text-red-500'}`}>
+-            {avgPts.toFixed(2)}
+-          </p>
+-        </div>
+-        <div className="rounded-lg bg-zinc-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Home goal bias</p>
+-          <p className={`text-2xl font-black tabular-nums ${Math.abs(homeGoalBias) < 0.3 ? 'text-zinc-700' : 'text-amber-600'}`}>
+-            {homeGoalBias >= 0 ? '+' : ''}{homeGoalBias.toFixed(2)}
+-          </p>
+-        </div>
+-        <div className="rounded-lg bg-zinc-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Away goal bias</p>
+-          <p className={`text-2xl font-black tabular-nums ${Math.abs(awayGoalBias) < 0.3 ? 'text-zinc-700' : 'text-amber-600'}`}>
+-            {awayGoalBias >= 0 ? '+' : ''}{awayGoalBias.toFixed(2)}
+-          </p>
+-        </div>
+-      </div>
+-
+-      {topMissedPattern && (
+-        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
+-          <span className="font-semibold">Top pattern: </span>{topMissedPattern}
+-        </div>
+-      )}
+-
+-      {missedPatterns.length > 0 && (
+-        <div className="space-y-2">
+-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Missed score patterns (2+ occurrences)</p>
+-          <div className="overflow-x-auto rounded-lg border border-zinc-100">
+-            <table className="w-full text-xs">
+-              <thead>
+-                <tr className="border-b border-zinc-100 bg-zinc-50">
+-                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Predicted</th>
+-                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Actual</th>
+-                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Count</th>
+-                </tr>
+-              </thead>
+-              <tbody>
+-                {missedPatterns.map((p, i) => (
+-                  <tr key={i} className="border-b border-zinc-50">
+-                    <td className="px-3 py-2 font-mono text-zinc-700">{p.predicted}</td>
+-                    <td className="px-3 py-2 font-mono text-zinc-900 font-semibold">{p.actual}</td>
+-                    <td className="px-3 py-2 text-center text-zinc-600">{p.count}</td>
+-                  </tr>
+-                ))}
+-              </tbody>
+-            </table>
+-          </div>
+-        </div>
+-      )}
+-    </div>
+-  )
+-}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-override-intelligence.tsx b/worldcup-app/src/components/analysis/tabs/tab-override-intelligence.tsx
+deleted file mode 100644
+index d7957c4..0000000
+--- a/worldcup-app/src/components/analysis/tabs/tab-override-intelligence.tsx
++++ /dev/null
+@@ -1,165 +0,0 @@
+-'use client'
+-import { useMemo } from 'react'
+-import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions } from '@/lib/store'
+-import { generateAllReviews } from '@/lib/match-review'
+-import { buildTeamAdjustments } from '@/lib/learning-layer'
+-import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
+-import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
+-
+-export function TabOverrideIntelligence() {
+-  const { reviews, overrides, accepted } = useMemo(() => {
+-    const fixtures = getFixtures()
+-    const teams = getTeams()
+-    const results = getResults()
+-    const locked = getLockedPredictions()
+-    const recs = getPoolRecommendations()
+-    const human = getHumanPredictions()
+-    const preds = getPredictions()
+-    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
+-    const standings = computeGroupStandings(fixtures, results)
+-
+-    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
+-    for (const ts of Object.values(standings)) {
+-      for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
+-    }
+-
+-    const reviews = generateAllReviews({
+-      fixtures, teams, lockedPredictions: locked,
+-      poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
+-    })
+-
+-    return {
+-      reviews,
+-      overrides: reviews.filter(r => r.overridden),
+-      accepted: reviews.filter(r => !r.overridden && r.enginePts != null),
+-    }
+-  }, [])
+-
+-  if (reviews.length === 0) {
+-    return (
+-      <div className="py-12 text-center">
+-        <p className="text-sm text-zinc-500">No completed matches yet.</p>
+-      </div>
+-    )
+-  }
+-
+-  const overrideWins   = overrides.filter(r => r.verdict === 'Override succeeded').length
+-  const overrideLosses = overrides.filter(r => r.verdict === 'Override failed').length
+-  const overrideNeutral = overrides.length - overrideWins - overrideLosses
+-
+-  const overridePts  = overrides.reduce((s, r) => s + r.myPts, 0)
+-  const recPts       = overrides.reduce((s, r) => s + (r.enginePts ?? 0), 0)
+-  const overrideDelta = overridePts - recPts
+-
+-  const acceptedMyPts  = accepted.reduce((s, r) => s + r.myPts, 0)
+-  const acceptedEngPts = accepted.reduce((s, r) => s + (r.enginePts ?? 0), 0)
+-
+-  const winRate = overrides.length > 0 ? (overrideWins / overrides.length) * 100 : null
+-
+-  return (
+-    <div className="space-y-5">
+-      {/* Override summary */}
+-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+-        <div className="rounded-lg bg-zinc-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Overrides</p>
+-          <p className="text-2xl font-black text-zinc-900">{overrides.length}</p>
+-        </div>
+-        <div className="rounded-lg bg-zinc-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Win rate</p>
+-          <p className={`text-2xl font-black ${winRate === null ? 'text-zinc-400' : winRate >= 50 ? 'text-green-700' : 'text-red-600'}`}>
+-            {winRate === null ? '—' : `${Math.round(winRate)}%`}
+-          </p>
+-        </div>
+-        <div className={`rounded-lg p-3 text-center ${overrideDelta > 0 ? 'bg-green-50' : overrideDelta < 0 ? 'bg-red-50' : 'bg-zinc-50'}`}>
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Override delta</p>
+-          <p className={`text-2xl font-black ${overrideDelta > 0 ? 'text-green-700' : overrideDelta < 0 ? 'text-red-600' : 'text-zinc-500'}`}>
+-            {overrideDelta > 0 ? '+' : ''}{overrideDelta}
+-          </p>
+-        </div>
+-        <div className="rounded-lg bg-zinc-50 p-3 text-center">
+-          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Accepted rec delta</p>
+-          <p className={`text-2xl font-black ${acceptedMyPts - acceptedEngPts > 0 ? 'text-green-700' : acceptedMyPts - acceptedEngPts < 0 ? 'text-red-600' : 'text-zinc-500'}`}>
+-            {acceptedMyPts - acceptedEngPts > 0 ? '+' : ''}{acceptedMyPts - acceptedEngPts}
+-          </p>
+-        </div>
+-      </div>
+-
+-      {/* W/L/N breakdown */}
+-      {overrides.length > 0 && (
+-        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+-          <div className="rounded bg-green-50 px-3 py-2">
+-            <TrendingUp className="mx-auto mb-1 h-4 w-4 text-green-600" />
+-            <p className="font-bold text-green-700 text-lg">{overrideWins}</p>
+-            <p className="text-green-600">Overrides won</p>
+-          </div>
+-          <div className="rounded bg-zinc-50 px-3 py-2">
+-            <Minus className="mx-auto mb-1 h-4 w-4 text-zinc-400" />
+-            <p className="font-bold text-zinc-600 text-lg">{overrideNeutral}</p>
+-            <p className="text-zinc-500">Neutral</p>
+-          </div>
+-          <div className="rounded bg-red-50 px-3 py-2">
+-            <TrendingDown className="mx-auto mb-1 h-4 w-4 text-red-500" />
+-            <p className="font-bold text-red-600 text-lg">{overrideLosses}</p>
+-            <p className="text-red-600">Overrides lost</p>
+-          </div>
+-        </div>
+-      )}
+-
+-      {/* Override detail table */}
+-      {overrides.length > 0 && (
+-        <div className="space-y-2">
+-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Override history</p>
+-          <div className="overflow-x-auto rounded-lg border border-zinc-100">
+-            <table className="w-full text-xs">
+-              <thead>
+-                <tr className="border-b border-zinc-100 bg-zinc-50">
+-                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
+-                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Engine</th>
+-                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Your pick</th>
+-                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
+-                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Δ pts</th>
+-                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Reason</th>
+-                </tr>
+-              </thead>
+-              <tbody>
+-                {overrides.map(r => {
+-                  const delta = r.deltaVsEngine ?? 0
+-                  return (
+-                    <tr key={r.fixtureId} className="border-b border-zinc-50 hover:bg-zinc-50/50">
+-                      <td className="px-3 py-2.5 font-medium text-zinc-900 whitespace-nowrap">
+-                        {r.homeCode} v {r.awayCode}
+-                      </td>
+-                      <td className="px-3 py-2.5 text-center font-mono text-zinc-400">
+-                        {r.engineH != null ? `${r.engineH}–${r.engineA}` : '—'}
+-                      </td>
+-                      <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-700">
+-                        {r.myH}–{r.myA}
+-                      </td>
+-                      <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">
+-                        {r.actualH}–{r.actualA}
+-                      </td>
+-                      <td className="px-3 py-2.5 text-center">
+-                        <span className={`font-bold ${delta > 0 ? 'text-green-700' : delta < 0 ? 'text-red-600' : 'text-zinc-400'}`}>
+-                          {delta > 0 ? '+' : ''}{delta}
+-                        </span>
+-                      </td>
+-                      <td className="px-3 py-2.5 text-zinc-500 max-w-[160px] truncate">
+-                        {r.overrideReason ?? <span className="text-zinc-300">—</span>}
+-                      </td>
+-                    </tr>
+-                  )
+-                })}
+-              </tbody>
+-            </table>
+-          </div>
+-        </div>
+-      )}
+-
+-      {overrides.length === 0 && (
+-        <div className="rounded-lg bg-zinc-50 px-4 py-6 text-center text-sm text-zinc-500">
+-          No overrides recorded yet. When you deviate from the engine recommendation, it will appear here.
+-        </div>
+-      )}
+-    </div>
+-  )
+-}
+diff --git a/worldcup-app/src/components/analysis/team-form-card.tsx b/worldcup-app/src/components/analysis/team-form-card.tsx
+deleted file mode 100644
+index c5dd741..0000000
+--- a/worldcup-app/src/components/analysis/team-form-card.tsx
++++ /dev/null
+@@ -1,201 +0,0 @@
+-'use client'
+-
+-import { useState } from 'react'
+-import {
+-  buildTeamAdjustments, formatFactor, teamSignal, hasNotableSignal,
+-} from '@/lib/learning-layer'
+-import type { TeamAdjustment } from '@/lib/learning-layer'
+-import type { SeedTeam, SeedFixture, SeedPrediction } from '@/lib/seed-data'
+-import type { ActualResult } from '@/lib/types'
+-import { ChevronDown, ChevronRight } from 'lucide-react'
+-
+-// ── Helpers ───────────────────────────────────────────────────────────────────
+-
+-function ConfidenceChip({ level }: { level: 'High' | 'Medium' | 'Low' }) {
+-  const cls =
+-    level === 'High'
+-      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+-      : level === 'Medium'
+-        ? 'bg-amber-50 text-amber-700 border-amber-200'
+-        : 'bg-zinc-100 text-zinc-500 border-zinc-200'
+-  return (
+-    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cls}`}>
+-      {level}
+-    </span>
+-  )
+-}
+-
+-// ── Signal row (primary view) ─────────────────────────────────────────────────
+-
+-function SignalRow({ adj }: { adj: TeamAdjustment }) {
+-  const sig = teamSignal(adj)
+-  const arrowCls =
+-    sig.colour === 'emerald'
+-      ? 'text-emerald-600'
+-      : sig.colour === 'red'
+-        ? 'text-red-500'
+-        : 'text-amber-500'
+-  const textCls =
+-    sig.colour === 'emerald'
+-      ? 'text-emerald-700'
+-      : sig.colour === 'red'
+-        ? 'text-red-600'
+-        : 'text-amber-600'
+-
+-  return (
+-    <div className="flex items-center gap-2.5 py-1.5">
+-      <span className="text-base leading-none w-6 text-center">{adj.flag}</span>
+-      <span className="flex-1 text-sm font-medium text-zinc-700 min-w-0">{adj.teamName}</span>
+-      <span className={`text-sm font-bold ${arrowCls}`}>{sig.arrow}</span>
+-      <span className={`text-xs ${textCls} text-right`}>{sig.headline}</span>
+-      <ConfidenceChip level={adj.confidence} />
+-    </div>
+-  )
+-}
+-
+-// ── Debug breakdown (power-user view) ────────────────────────────────────────
+-
+-function DebugRow({ adj }: { adj: TeamAdjustment }) {
+-  return (
+-    <div className="py-2 border-t border-zinc-100 first:border-t-0">
+-      <div className="flex items-center gap-2 mb-1">
+-        <span className="text-sm">{adj.flag}</span>
+-        <span className="text-xs font-semibold text-zinc-700">{adj.teamName}</span>
+-        <span className="text-[10px] text-zinc-400">{adj.matchesPlayed}G played</span>
+-        <ConfidenceChip level={adj.confidence} />
+-      </div>
+-      <div className="flex gap-4 text-xs text-zinc-500 mb-1.5">
+-        <span>ATK factor <span className="font-mono font-semibold text-zinc-700">{formatFactor(adj.attackFactor)}</span></span>
+-        <span>DEF factor <span className="font-mono font-semibold text-zinc-700">{formatFactor(adj.defenceFactor)}</span></span>
+-      </div>
+-      <table className="w-full text-[10px]">
+-        <thead>
+-          <tr className="text-zinc-400">
+-            <th className="text-left pb-0.5 font-normal">Match</th>
+-            <th className="text-right pb-0.5 font-normal">Scored / xG</th>
+-            <th className="text-right pb-0.5 font-normal">Conceded / xGA</th>
+-            <th className="text-right pb-0.5 font-normal pl-2">Wt</th>
+-          </tr>
+-        </thead>
+-        <tbody>
+-          {adj.contributions.map(c => {
+-            const atkDelta = Math.round((c.actualScored - c.expectedScored) * 10) / 10
+-            const defDelta = Math.round((c.actualConceded - c.expectedConceded) * 10) / 10
+-            return (
+-              <tr key={c.fixtureId} className="border-t border-zinc-50">
+-                <td className="py-0.5 pr-2 text-zinc-500">MD{c.matchday} vs {c.opponent}</td>
+-                <td className="py-0.5 text-right tabular-nums text-zinc-600">
+-                  {c.actualScored}
+-                  <span className="text-zinc-400"> / {c.expectedScored.toFixed(1)}</span>
+-                  <span className={atkDelta >= 0 ? 'text-emerald-600 ml-1' : 'text-red-500 ml-1'}>
+-                    {atkDelta >= 0 ? '+' : ''}{atkDelta}
+-                  </span>
+-                </td>
+-                <td className="py-0.5 text-right tabular-nums text-zinc-600">
+-                  {c.actualConceded}
+-                  <span className="text-zinc-400"> / {c.expectedConceded.toFixed(1)}</span>
+-                  <span className={defDelta <= 0 ? 'text-emerald-600 ml-1' : 'text-red-500 ml-1'}>
+-                    {defDelta >= 0 ? '+' : ''}{defDelta}
+-                  </span>
+-                </td>
+-                <td className="py-0.5 pl-2 text-right text-zinc-400">×{c.weight}</td>
+-              </tr>
+-            )
+-          })}
+-        </tbody>
+-      </table>
+-    </div>
+-  )
+-}
+-
+-// ── Main card ─────────────────────────────────────────────────────────────────
+-
+-interface Props {
+-  teams: SeedTeam[]
+-  fixtures: SeedFixture[]
+-  results: ActualResult[]
+-  predictions: SeedPrediction[]
+-}
+-
+-export function TeamFormCard({ teams, fixtures, results, predictions }: Props) {
+-  const [debugOpen, setDebugOpen] = useState(false)
+-
+-  const adjustments = buildTeamAdjustments(teams, fixtures, results, predictions)
+-  const notable     = adjustments.filter(hasNotableSignal)
+-  const all         = adjustments
+-
+-  const matchesPlayed = results.length
+-
+-  if (matchesPlayed === 0) {
+-    return (
+-      <div className="rounded-xl border border-zinc-200 bg-white p-5 text-center">
+-        <p className="text-sm font-medium text-zinc-500">Tournament Learning</p>
+-        <p className="mt-1 text-xs text-zinc-400">
+-          Signals will appear once match results are entered.
+-        </p>
+-      </div>
+-    )
+-  }
+-
+-  return (
+-    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
+-
+-      {/* Header */}
+-      <div className="px-5 pt-4 pb-3 border-b border-zinc-100">
+-        <div className="flex items-center justify-between gap-2">
+-          <h2 className="text-sm font-semibold text-zinc-800">Tournament Learning</h2>
+-          <span className="text-[10px] text-zinc-400">{matchesPlayed} result{matchesPlayed !== 1 ? 's' : ''} analysed</span>
+-        </div>
+-        <p className="text-xs text-zinc-400 mt-0.5">
+-          Already incorporated into future recommendations.
+-        </p>
+-      </div>
+-
+-      {/* Signal list */}
+-      <div className="px-5 py-1 divide-y divide-zinc-50">
+-        {notable.length > 0 ? (
+-          notable.map(adj => <SignalRow key={adj.teamId} adj={adj} />)
+-        ) : (
+-          <p className="py-3 text-xs text-zinc-400">
+-            All teams are performing close to model expectations.
+-          </p>
+-        )}
+-      </div>
+-
+-      {/* Footer note */}
+-      {notable.length > 0 && (
+-        <div className="px-5 pb-3">
+-          <p className="text-[10px] text-zinc-400">
+-            Confidence reflects matches played: 1 game = Low, 2 = Medium, 3+ = High.
+-          </p>
+-        </div>
+-      )}
+-
+-      {/* Debug details toggle */}
+-      {all.length > 0 && (
+-        <div className="border-t border-zinc-100">
+-          <button
+-            onClick={() => setDebugOpen(v => !v)}
+-            className="w-full flex items-center gap-1.5 px-5 py-2.5 text-[11px] text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50 transition-colors text-left"
+-          >
+-            {debugOpen
+-              ? <ChevronDown className="h-3 w-3 shrink-0" />
+-              : <ChevronRight className="h-3 w-3 shrink-0" />}
+-            Learning debug details (ATK / DEF factors, weighted calculations)
+-          </button>
+-          {debugOpen && (
+-            <div className="px-5 pb-4">
+-              <p className="text-[10px] text-zinc-400 mb-3">
+-                ATK = Σ(weight × actual scored) / Σ(weight × xG). DEF = same for conceded. Clamped [0.5–2.0].
+-                Last 3 matches weighted ×2, earlier ×1.
+-              </p>
+-              <div className="divide-y divide-zinc-50">
+-                {all.map(adj => <DebugRow key={adj.teamId} adj={adj} />)}
+-              </div>
+-            </div>
+-          )}
+-        </div>
+-      )}
+-    </div>
+-  )
+-}
+diff --git a/worldcup-app/src/components/analysis/upcoming-assistant.tsx b/worldcup-app/src/components/analysis/upcoming-assistant.tsx
+deleted file mode 100644
+index c4772c8..0000000
+--- a/worldcup-app/src/components/analysis/upcoming-assistant.tsx
++++ /dev/null
+@@ -1,235 +0,0 @@
+-'use client'
+-
+-import { getFixtures, getTeams, getResults, getPredictions, computeMetrics } from '@/lib/store'
+-import { computeDisagreementScore } from '@/lib/analytics'
+-import { MODEL_COLORS } from '@/lib/utils'
+-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+-import { Lightbulb } from 'lucide-react'
+-
+-const pct = (n: number) => `${Math.round(n * 100)}%`
+-
+-type MatchType = 'Heavy favorite' | 'Draw candidate' | 'Balanced' | 'Model conflict'
+-type ActionConf = 'High' | 'Medium' | 'Low'
+-interface FixtureAdvice {
+-  matchType: MatchType
+-  action: string
+-  confidence: ActionConf
+-  reason: string
+-}
+-
+-function classifyFixture(
+-  preds: Array<{ hw: number; dw: number; aw: number }>,
+-  disagreementScore: number,
+-  bestModel: string | null,
+-): FixtureAdvice {
+-  if (preds.length === 0) {
+-    return { matchType: 'Balanced', action: 'No data', confidence: 'Low', reason: 'No model predictions available for this fixture.' }
+-  }
+-
+-  // Averages across available models
+-  const avgHw = preds.reduce((s, p) => s + p.hw, 0) / preds.length
+-  const avgDw = preds.reduce((s, p) => s + p.dw, 0) / preds.length
+-  const avgAw = preds.reduce((s, p) => s + p.aw, 0) / preds.length
+-  const topOutcomeProb = Math.max(avgHw, avgAw)
+-
+-  const isHeavyFavorite = topOutcomeProb > 0.65
+-  const isDrawCandidate = avgDw > 0.30
+-  const isMaterialDisagreement = disagreementScore >= 0.12
+-
+-  // Match type — conflict takes priority over others
+-  let matchType: MatchType
+-  if (isMaterialDisagreement) {
+-    matchType = 'Model conflict'
+-  } else if (isHeavyFavorite) {
+-    matchType = 'Heavy favorite'
+-  } else if (isDrawCandidate) {
+-    matchType = 'Draw candidate'
+-  } else {
+-    matchType = 'Balanced'
+-  }
+-
+-  // Action + confidence + reason
+-  if (isMaterialDisagreement) {
+-    return {
+-      matchType,
+-      action: 'Review manually',
+-      confidence: 'Low',
+-      reason: `Models diverge significantly on this fixture — check each model's probabilities before locking a prediction.`,
+-    }
+-  }
+-
+-  if (isHeavyFavorite && disagreementScore < 0.08) {
+-    return {
+-      matchType,
+-      action: 'Trust any model',
+-      confidence: 'High',
+-      reason: `All models agree on a clear favourite (avg ${pct(topOutcomeProb)} win prob) — the choice of model won't change the outcome.`,
+-    }
+-  }
+-
+-  if (isDrawCandidate) {
+-    return {
+-      matchType,
+-      action: 'Review manually',
+-      confidence: 'Low',
+-      reason: `Draw probability is elevated (avg ${pct(avgDw)}) — draw candidates are harder to call and models may underestimate draws.`,
+-    }
+-  }
+-
+-  // Balanced match — models loosely agree, use best overall model
+-  if (bestModel) {
+-    return {
+-      matchType,
+-      action: `Use Model ${bestModel}`,
+-      confidence: 'Medium',
+-      reason: `Fixture is balanced and models broadly agree — defer to the best-calibrated model for a small edge.`,
+-    }
+-  }
+-
+-  return {
+-    matchType,
+-    action: 'Review manually',
+-    confidence: 'Low',
+-    reason: 'Not enough historical data to recommend a model yet.',
+-  }
+-}
+-
+-const CONF_BADGE: Record<ActionConf, string> = {
+-  High:   'bg-green-100 text-green-700',
+-  Medium: 'bg-amber-100 text-amber-700',
+-  Low:    'bg-zinc-100 text-zinc-500',
+-}
+-
+-const TYPE_BADGE: Record<MatchType, string> = {
+-  'Heavy favorite': 'bg-blue-50 text-blue-700',
+-  'Draw candidate': 'bg-purple-50 text-purple-700',
+-  'Balanced':       'bg-zinc-50 text-zinc-600',
+-  'Model conflict': 'bg-red-50 text-red-600',
+-}
+-
+-export function UpcomingAssistant() {
+-  const fixtures = getFixtures()
+-  const teams = getTeams()
+-  const results = getResults()
+-  const allPreds = getPredictions()
+-  const metrics = computeMetrics()
+-  const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
+-
+-  const playedIds = new Set(results.map(r => r.fixture_id))
+-  const now = new Date()
+-
+-  const upcoming = fixtures
+-    .filter(f => !playedIds.has(f.id) && new Date(f.kickoff_utc) >= now)
+-    .sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
+-    .slice(0, 5)
+-
+-  const bestByBrier = [...metrics]
+-    .filter(m => m.total > 0)
+-    .sort((a, b) => a.avgBrier - b.avgBrier)[0]
+-
+-  if (upcoming.length === 0) {
+-    return (
+-      <Card>
+-        <CardHeader>
+-          <CardTitle className="flex items-center gap-1.5 text-sm">
+-            <Lightbulb className="h-3.5 w-3.5" /> Upcoming Match Assistant
+-          </CardTitle>
+-        </CardHeader>
+-        <CardContent>
+-          <p className="text-xs text-zinc-400">No upcoming fixtures found.</p>
+-        </CardContent>
+-      </Card>
+-    )
+-  }
+-
+-  return (
+-    <Card>
+-      <CardHeader>
+-        <CardTitle className="flex items-center gap-1.5 text-sm">
+-          <Lightbulb className="h-3.5 w-3.5" /> Upcoming Match Assistant
+-        </CardTitle>
+-        <p className="text-xs text-zinc-400 mt-0.5">Next {upcoming.length} fixtures — per-match action and confidence</p>
+-      </CardHeader>
+-      <CardContent className="space-y-3">
+-        {upcoming.map(fix => {
+-          const home = teamMap[fix.home_team_id]
+-          const away = teamMap[fix.away_team_id]
+-          const predA = allPreds.find(p => p.fixture_id === fix.id && p.model === 'A')
+-          const predB = allPreds.find(p => p.fixture_id === fix.id && p.model === 'B')
+-          const predC = allPreds.find(p => p.fixture_id === fix.id && p.model === 'C')
+-          const available = [predA, predB, predC].filter(Boolean)
+-
+-          const disagreementScore = available.length >= 2
+-            ? computeDisagreementScore(available.map(p => ({ hw: p!.home_win_prob, dw: p!.draw_prob, aw: p!.away_win_prob })))
+-            : 0
+-
+-          const advice = classifyFixture(
+-            available.map(p => ({ hw: p!.home_win_prob, dw: p!.draw_prob, aw: p!.away_win_prob })),
+-            disagreementScore,
+-            bestByBrier?.model ?? null,
+-          )
+-
+-          const kickoff = new Date(fix.kickoff_utc)
+-          const dateStr = kickoff.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })
+-          const timeStr = kickoff.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+-
+-          return (
+-            <div key={fix.id} className="rounded-lg border border-zinc-100 p-3 space-y-2.5">
+-
+-              {/* Header row */}
+-              <div className="flex items-start justify-between gap-2">
+-                <div>
+-                  <div className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900">
+-                    <span>{home?.flag_url}</span>
+-                    <span>{home?.code ?? fix.home_team_id}</span>
+-                    <span className="text-zinc-300 font-normal">vs</span>
+-                    <span>{away?.code ?? fix.away_team_id}</span>
+-                    <span>{away?.flag_url}</span>
+-                  </div>
+-                  <p className="text-xs text-zinc-400 mt-0.5">Group {fix.group} · {dateStr} {timeStr}</p>
+-                </div>
+-                {/* Match type tag */}
+-                <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${TYPE_BADGE[advice.matchType]}`}>
+-                  {advice.matchType}
+-                </span>
+-              </div>
+-
+-              {/* Model probabilities */}
+-              <div className="grid grid-cols-3 gap-2">
+-                {([['A', predA], ['B', predB], ['C', predC]] as const).map(([m, pred]) => (
+-                  <div
+-                    key={m}
+-                    className={`rounded p-2 text-center ${bestByBrier?.model === m ? 'bg-zinc-100 ring-1 ring-zinc-300' : 'bg-zinc-50'}`}
+-                  >
+-                    <div className={`inline-flex rounded px-1.5 py-0.5 text-white text-xs mb-1 ${MODEL_COLORS[m]}`}>{m}</div>
+-                    {pred ? (
+-                      <div className="text-xs space-y-0.5">
+-                        <div className="flex justify-between text-zinc-600"><span>H</span><span className="font-semibold">{pct(pred.home_win_prob)}</span></div>
+-                        <div className="flex justify-between text-zinc-400"><span>D</span><span>{pct(pred.draw_prob)}</span></div>
+-                        <div className="flex justify-between text-zinc-600"><span>A</span><span className="font-semibold">{pct(pred.away_win_prob)}</span></div>
+-                      </div>
+-                    ) : (
+-                      <span className="text-xs text-zinc-300">—</span>
+-                    )}
+-                  </div>
+-                ))}
+-              </div>
+-
+-              {/* Action strip */}
+-              <div className="flex items-start gap-2 rounded-md bg-zinc-50 px-2.5 py-2">
+-                <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+-                  <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${CONF_BADGE[advice.confidence]}`}>
+-                    {advice.confidence}
+-                  </span>
+-                  <span className="text-xs font-medium text-zinc-700">{advice.action}</span>
+-                </div>
+-                <p className="text-xs text-zinc-400 leading-snug">{advice.reason}</p>
+-              </div>
+-
+-            </div>
+-          )
+-        })}
+-      </CardContent>
+-    </Card>
+-  )
+-}
+-- 
+2.43.0
+

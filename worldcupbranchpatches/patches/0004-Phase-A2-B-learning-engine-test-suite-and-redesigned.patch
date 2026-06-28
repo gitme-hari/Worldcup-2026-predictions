@@ -1,0 +1,4714 @@
+From 7fff61bf3e7c4a2d9ebe52f0932e1fe25fdb11b7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 28 Jun 2026 17:51:15 +0000
+Subject: [PATCH 4/6] Phase A2+B: learning engine test suite and redesigned
+ Performance page
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A2 — Test suite (160 tests, 0 failures):
+- Added vitest with full test coverage across failure-classifier,
+  match-review, learning-signals, exact-score-analysis,
+  recommendation-insight, decision-support, integration, golden
+  matches, benchmarks, and regression paths
+- Shared test-factories.ts with fully-typed factory helpers
+- Fixed production bugs: duplicate const in failure-classifier,
+  missing over_predicted_goals lesson in match-review
+
+Phase B — Performance page redesign:
+- Replaced monolithic AnalysisPanel with PerformancePanel + 6 tabs
+- Decision Review: match-by-match review with pts/delta summary
+- Override Intelligence: win rate, delta, and history table
+- Engine Learning: derived signals with strength and active status
+- Blind Spots: failure pattern breakdown with visual bars
+- Exact Score Optimisation: distribution, bias, missed patterns
+- Diagnostics: model leaderboard, calibration, health (existing views)
+- All tabs consume A1/A2 lib layer; no new migrations, no UI regressions
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RU92kjKaNM5o2ZXbwgeazK
+---
+ worldcup-app/package-lock.json                | 982 +++++++++++++++++-
+ worldcup-app/package.json                     |   9 +-
+ worldcup-app/src/__tests__/benchmarks.test.ts | 187 ++++
+ .../decision-support-net-effect.test.ts       | 301 ++++++
+ .../__tests__/exact-score-analysis.test.ts    | 104 ++
+ .../src/__tests__/failure-classifier.test.ts  | 128 +++
+ .../src/__tests__/golden-matches.test.ts      | 312 ++++++
+ .../src/__tests__/integration.test.ts         | 416 ++++++++
+ .../src/__tests__/learning-signals.test.ts    | 134 +++
+ .../src/__tests__/match-review.test.ts        | 254 +++++
+ .../__tests__/recommendation-insight.test.ts  | 176 ++++
+ worldcup-app/src/__tests__/regression.test.ts | 114 ++
+ worldcup-app/src/__tests__/test-factories.ts  | 113 ++
+ worldcup-app/src/app/analysis/page.tsx        |   6 +-
+ .../components/analysis/performance-panel.tsx |  69 ++
+ .../analysis/tabs/tab-blind-spots.tsx         | 121 +++
+ .../analysis/tabs/tab-decision-review.tsx     | 137 +++
+ .../analysis/tabs/tab-diagnostics.tsx         | 133 +++
+ .../analysis/tabs/tab-engine-learning.tsx     | 115 ++
+ .../analysis/tabs/tab-exact-score.tsx         | 131 +++
+ .../tabs/tab-override-intelligence.tsx        | 165 +++
+ worldcup-app/src/lib/failure-classifier.ts    |  13 +-
+ worldcup-app/src/lib/learning-signals.ts      |   7 +-
+ worldcup-app/src/lib/match-review.ts          |  17 +-
+ worldcup-app/vitest.config.ts                 |  14 +
+ 25 files changed, 4132 insertions(+), 26 deletions(-)
+ create mode 100644 worldcup-app/src/__tests__/benchmarks.test.ts
+ create mode 100644 worldcup-app/src/__tests__/decision-support-net-effect.test.ts
+ create mode 100644 worldcup-app/src/__tests__/exact-score-analysis.test.ts
+ create mode 100644 worldcup-app/src/__tests__/failure-classifier.test.ts
+ create mode 100644 worldcup-app/src/__tests__/golden-matches.test.ts
+ create mode 100644 worldcup-app/src/__tests__/integration.test.ts
+ create mode 100644 worldcup-app/src/__tests__/learning-signals.test.ts
+ create mode 100644 worldcup-app/src/__tests__/match-review.test.ts
+ create mode 100644 worldcup-app/src/__tests__/recommendation-insight.test.ts
+ create mode 100644 worldcup-app/src/__tests__/regression.test.ts
+ create mode 100644 worldcup-app/src/__tests__/test-factories.ts
+ create mode 100644 worldcup-app/src/components/analysis/performance-panel.tsx
+ create mode 100644 worldcup-app/src/components/analysis/tabs/tab-blind-spots.tsx
+ create mode 100644 worldcup-app/src/components/analysis/tabs/tab-decision-review.tsx
+ create mode 100644 worldcup-app/src/components/analysis/tabs/tab-diagnostics.tsx
+ create mode 100644 worldcup-app/src/components/analysis/tabs/tab-engine-learning.tsx
+ create mode 100644 worldcup-app/src/components/analysis/tabs/tab-exact-score.tsx
+ create mode 100644 worldcup-app/src/components/analysis/tabs/tab-override-intelligence.tsx
+ create mode 100644 worldcup-app/vitest.config.ts
+
+diff --git a/worldcup-app/package-lock.json b/worldcup-app/package-lock.json
+index ef1d17f..adc77d2 100644
+--- a/worldcup-app/package-lock.json
++++ b/worldcup-app/package-lock.json
+@@ -31,10 +31,12 @@
+         "@types/node": "^20",
+         "@types/react": "^19",
+         "@types/react-dom": "^19",
++        "@vitest/coverage-v8": "^4.1.9",
+         "eslint": "^9",
+         "eslint-config-next": "16.2.9",
+         "tailwindcss": "^4",
+-        "typescript": "^5"
++        "typescript": "^5",
++        "vitest": "^4.1.9"
+       }
+     },
+     "node_modules/@alloc/quick-lru": {
+@@ -290,6 +292,16 @@
+         "node": ">=6.9.0"
+       }
+     },
++    "node_modules/@bcoe/v8-coverage": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/@bcoe/v8-coverage/-/v8-coverage-1.0.2.tgz",
++      "integrity": "sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/@emnapi/core": {
+       "version": "1.10.0",
+       "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.10.0.tgz",
+@@ -303,9 +315,9 @@
+       }
+     },
+     "node_modules/@emnapi/runtime": {
+-      "version": "1.11.0",
+-      "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.0.tgz",
+-      "integrity": "sha512-55coeOFKHv1ywEcUXJtWU5f+Jr/W5tZDvZig8DLKSwUN1JpROQ4rk/SNOQiFWmaR/VKF4zuFyW1B8JduOSv6Pg==",
++      "version": "1.11.1",
++      "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.1.tgz",
++      "integrity": "sha512-vgj7R3y3Wgx24IQaGPA/R6YFXLHVMOZ0uVEyIQPaWs+rd1AzfEMXlAC22FYwO1XkKR6NPsq7mUandH8oIRdZFw==",
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -1088,14 +1100,14 @@
+       }
+     },
+     "node_modules/@napi-rs/wasm-runtime": {
+-      "version": "1.1.5",
+-      "resolved": "https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.1.5.tgz",
+-      "integrity": "sha512-AWPoBRJ9tsnVhor4sjO7rkni+7p+2IAEFj6cx06UgP10jkQHqay/36uRV/bFkgrh18D9vb4cr8Q0Pthskgzy+Q==",
++      "version": "1.1.6",
++      "resolved": "https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.1.6.tgz",
++      "integrity": "sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==",
+       "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+-        "@tybys/wasm-util": "^0.10.2"
++        "@tybys/wasm-util": "^0.10.3"
+       },
+       "funding": {
+         "type": "github",
+@@ -1298,6 +1310,16 @@
+         "node": ">=12.4.0"
+       }
+     },
++    "node_modules/@oxc-project/types": {
++      "version": "0.137.0",
++      "resolved": "https://registry.npmjs.org/@oxc-project/types/-/types-0.137.0.tgz",
++      "integrity": "sha512-WT+Gb24i8hmvo85AIv2oEYouEXkRlKAlT9WaCa3TfLgNCN+GhrJOGZuIlMouAh38Qe4QOx26eUOVsq70qXrywA==",
++      "dev": true,
++      "license": "MIT",
++      "funding": {
++        "url": "https://github.com/sponsors/Boshen"
++      }
++    },
+     "node_modules/@radix-ui/number": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/@radix-ui/number/-/number-1.1.2.tgz",
+@@ -2064,6 +2086,293 @@
+       "integrity": "sha512-xnXE7wG13PI+cxieVssYXlQJuYVRhH9NBoxt3KNwzghDIA69GMm7d4wXRouHIYjE+KvS6U/MsMO73NdS2MH9ZA==",
+       "license": "MIT"
+     },
++    "node_modules/@rolldown/binding-android-arm64": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-android-arm64/-/binding-android-arm64-1.1.3.tgz",
++      "integrity": "sha512-DT6Z3PhvioeHMvxo+xHc3KtqggrI7CCTXCmC2h/5zUlp5jVitv7XEy+9q5/7v8IolhlioawpMo8Kg0EEBy7J0g==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-darwin-arm64": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-darwin-arm64/-/binding-darwin-arm64-1.1.3.tgz",
++      "integrity": "sha512-0NwgwsjM7LrsuVnXMK3koTpagBNOhloc/BNjKqZjv4V5zI5r13qx69uVhRx+o5Z0yy4Hzq+lpy7TAgUG/ocvrw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-darwin-x64": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-darwin-x64/-/binding-darwin-x64-1.1.3.tgz",
++      "integrity": "sha512-YtiBp4disu6V560loT6PjMdiRaWmVvDNrUunAalbiFx2ggeJwxdAsgZMcoGP17uyAsTwAj5V1niksxlHnVQ1Sw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-freebsd-x64": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-freebsd-x64/-/binding-freebsd-x64-1.1.3.tgz",
++      "integrity": "sha512-yD3EkEdXk2LypPxnf/kSZHirarsI8gcPzc62SukhR9VJTyvV+F9Q/GxWNuCojc7sXyuVC4DxRGhdDK4X8VSsbw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm-gnueabihf": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-1.1.3.tgz",
++      "integrity": "sha512-c+8vieQbsD7HNAHKIA34w0GJ9FedFFuJGD+7E6vz7Q3uqAIugL5p45fhlsj4UaAsHpcmlqugBWMhA0/j7o0sIg==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm64-gnu": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-1.1.3.tgz",
++      "integrity": "sha512-50jD0uUwLvur7Zz9LHz17kaAdTPjn5wN93hEgjvmYFRZwiR7ZJYovTd5ipyWJDAnXKvZ+wgc+/Ika6dwSF5OcA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm64-musl": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-musl/-/binding-linux-arm64-musl-1.1.3.tgz",
++      "integrity": "sha512-BO9+oPL8K9poZJBfYPsXNtYjPE5uM3qeehT3aFcW4LITOl+iSqhp0abzjR2nWBUNjIZeKXjAEWBZ64WjNoHd6w==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-ppc64-gnu": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-ppc64-gnu/-/binding-linux-ppc64-gnu-1.1.3.tgz",
++      "integrity": "sha512-f3VpLB1vQ0Eo6ecr/6cekLnvYMFF4YBFoVGkfkvPLq1bAkbAwHYQPZKoAmG6OJyTcxxoC+AvezGx/S1obNC0Mw==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-s390x-gnu": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-1.1.3.tgz",
++      "integrity": "sha512-AmurZ26Pqx/RI9N1gzEOCklkKXl927yjfXWUUS0O7Puh8ARM/Ob8qfrD3qnWksScdw6cSrW5PSHE9DyLu7+PtA==",
++      "cpu": [
++        "s390x"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-x64-gnu": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.1.3.tgz",
++      "integrity": "sha512-JJpqs8bRGITDOdbkNKnlojzBabbOHrqjSvDr0IVsZObE1lBcPjxItUEY9eWIDbxaJ3cGrXPWGfGkIxFijg/URg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-x64-musl": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.1.3.tgz",
++      "integrity": "sha512-rSJcdjPxzA/by/6/rYs+v+bXU7UjvnbUWz8MJb6kh6+knqB1dCrtHg0uu7C/4haqJvqdkYHQ5IGn+tCH9GLW/g==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-openharmony-arm64": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-openharmony-arm64/-/binding-openharmony-arm64-1.1.3.tgz",
++      "integrity": "sha512-hQ3/PYkDJICgevvyNcVrihVeqq7k1Pp3VZ9lY+dauAYUJKO+auqApvANhvR1An9BhmqYKvW2Mu1F9u4DXSMLxQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openharmony"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-wasm32-wasi": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-wasm32-wasi/-/binding-wasm32-wasi-1.1.3.tgz",
++      "integrity": "sha512-Elcv/BtML9lXrV6JuKITc/grN2kYV9gjsQpW8Jfw4ioK0TOkjBjye0nnyqQNy9STNaI20lXNaQBRrD5gSgR0Yg==",
++      "cpu": [
++        "wasm32"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "@emnapi/core": "1.11.1",
++        "@emnapi/runtime": "1.11.1",
++        "@napi-rs/wasm-runtime": "^1.1.6"
++      },
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-wasm32-wasi/node_modules/@emnapi/core": {
++      "version": "1.11.1",
++      "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.11.1.tgz",
++      "integrity": "sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "@emnapi/wasi-threads": "1.2.2",
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@rolldown/binding-wasm32-wasi/node_modules/@emnapi/wasi-threads": {
++      "version": "1.2.2",
++      "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.2.tgz",
++      "integrity": "sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA==",
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@rolldown/binding-win32-arm64-msvc": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-1.1.3.tgz",
++      "integrity": "sha512-2DrEfhluH9yhiaFApmsjsjwrSYbNcY1oFTzYSP1a535jDbV98zCFanA/96TBUd0iDFcxGmw9QRExwGCXz3U+/g==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-win32-x64-msvc": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.1.3.tgz",
++      "integrity": "sha512-OL4OMk7UPXOeVGGd3qo5zJyPIljf4AFgk5QAkPPS+OoLuOOozhuaQGC18MxVTnw/06q93gShAJzlwnSCY9YtqA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/pluginutils": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz",
++      "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/@rtsao/scc": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/@rtsao/scc/-/scc-1.1.0.tgz",
+@@ -2071,6 +2380,13 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@standard-schema/spec": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
++      "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/@supabase/auth-js": {
+       "version": "2.108.1",
+       "resolved": "https://registry.npmjs.org/@supabase/auth-js/-/auth-js-2.108.1.tgz",
+@@ -2448,9 +2764,9 @@
+       }
+     },
+     "node_modules/@tybys/wasm-util": {
+-      "version": "0.10.2",
+-      "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.2.tgz",
+-      "integrity": "sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg==",
++      "version": "0.10.3",
++      "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.3.tgz",
++      "integrity": "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==",
+       "dev": true,
+       "license": "MIT",
+       "optional": true,
+@@ -2458,6 +2774,24 @@
+         "tslib": "^2.4.0"
+       }
+     },
++    "node_modules/@types/chai": {
++      "version": "5.2.3",
++      "resolved": "https://registry.npmjs.org/@types/chai/-/chai-5.2.3.tgz",
++      "integrity": "sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/deep-eql": "*",
++        "assertion-error": "^2.0.1"
++      }
++    },
++    "node_modules/@types/deep-eql": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/@types/deep-eql/-/deep-eql-4.0.2.tgz",
++      "integrity": "sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/@types/estree": {
+       "version": "1.0.9",
+       "resolved": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
+@@ -3128,6 +3462,150 @@
+         "win32"
+       ]
+     },
++    "node_modules/@vitest/coverage-v8": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/@vitest/coverage-v8/-/coverage-v8-4.1.9.tgz",
++      "integrity": "sha512-G9/lgqibheLVBDRuya45EbsEXTYcWoSG+TLg7i2axuzx0Eq62eXn+aWXyaVdV5vKvFSWd6ywcX8hA7la9Pvu8g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@bcoe/v8-coverage": "^1.0.2",
++        "@vitest/utils": "4.1.9",
++        "ast-v8-to-istanbul": "^1.0.0",
++        "istanbul-lib-coverage": "^3.2.2",
++        "istanbul-lib-report": "^3.0.1",
++        "istanbul-reports": "^3.2.0",
++        "magicast": "^0.5.2",
++        "obug": "^2.1.1",
++        "std-env": "^4.0.0-rc.1",
++        "tinyrainbow": "^3.1.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "@vitest/browser": "4.1.9",
++        "vitest": "4.1.9"
++      },
++      "peerDependenciesMeta": {
++        "@vitest/browser": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@vitest/expect": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.9.tgz",
++      "integrity": "sha512-vl/rYsUKcBr3SnQn166+XR5ZQcgMx3DQhFWdfli/cWpLnLUmbxZvyrJZotLFUryib+LtArYMSTJ5RbQ57ZqrlA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@standard-schema/spec": "^1.1.0",
++        "@types/chai": "^5.2.2",
++        "@vitest/spy": "4.1.9",
++        "@vitest/utils": "4.1.9",
++        "chai": "^6.2.2",
++        "tinyrainbow": "^3.1.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/mocker": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.9.tgz",
++      "integrity": "sha512-EVkXzBjrPGM+cK8/ANWgBrkUCfJfb38/EfTSO8h7pWvKkyPkpWxvR7BkD2MyItMF62C97zAEoqdpUixwR/e+Rw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/spy": "4.1.9",
++        "estree-walker": "^3.0.3",
++        "magic-string": "^0.30.21"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "msw": "^2.4.9",
++        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
++      },
++      "peerDependenciesMeta": {
++        "msw": {
++          "optional": true
++        },
++        "vite": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@vitest/pretty-format": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.9.tgz",
++      "integrity": "sha512-s0iufns3iIFitdgm+YR7g1whCAaGtXz459VS9/PqyKDEEFgYIhsHOQmXgIgDuYCt7DeQmiZT0Qe2OA2p4ZPu5A==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "tinyrainbow": "^3.1.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/runner": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.9.tgz",
++      "integrity": "sha512-KXLMDtc7oe70+3mJfGrPUWPesswH+3sTxAMAMl8DG7I8IUQT4XW718dY5ID3vPUcmlu27CcKfY4P3h3I29SLJg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/utils": "4.1.9",
++        "pathe": "^2.0.3"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/snapshot": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.9.tgz",
++      "integrity": "sha512-Jc7RKGNBo8Z28WYIm0Niej4xdSPByRf6mU58VpHQkd6Zh05rlnA+twjbK5HyeIGHxrzsc3mJgS43uM0CZKzaIA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/pretty-format": "4.1.9",
++        "@vitest/utils": "4.1.9",
++        "magic-string": "^0.30.21",
++        "pathe": "^2.0.3"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/spy": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.9.tgz",
++      "integrity": "sha512-fHpsS6mIi+PiEW+vcRVOMkX1oSaPKne3VOclSFICPcGOmfKgXPU5iAah+wcNcj2xPrCCmfq99IDGf+EojhhvhA==",
++      "dev": true,
++      "license": "MIT",
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/@vitest/utils": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.9.tgz",
++      "integrity": "sha512-A51o8ymO5PpqlWNnBP9ZHPXDIpuMtTLlGSjN7la4US+LJzoUMyhwjA5QXlm39JexgwHKW4Xjs8Z2d3dLCXOeuA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/pretty-format": "4.1.9",
++        "convert-source-map": "^2.0.0",
++        "tinyrainbow": "^3.1.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
+     "node_modules/acorn": {
+       "version": "8.16.0",
+       "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.16.0.tgz",
+@@ -3373,6 +3851,16 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/assertion-error": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/assertion-error/-/assertion-error-2.0.1.tgz",
++      "integrity": "sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/ast-types-flow": {
+       "version": "0.0.8",
+       "resolved": "https://registry.npmjs.org/ast-types-flow/-/ast-types-flow-0.0.8.tgz",
+@@ -3380,6 +3868,25 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/ast-v8-to-istanbul": {
++      "version": "1.0.4",
++      "resolved": "https://registry.npmjs.org/ast-v8-to-istanbul/-/ast-v8-to-istanbul-1.0.4.tgz",
++      "integrity": "sha512-0bC0/4bTSrnwdhU3IsZDwEdojvuPrSg59OYZfKsLRtJZ0u8VBx9DebfqqG8bRdCC0I7vjgxmPi41P0lpkhJHtA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/trace-mapping": "^0.3.31",
++        "estree-walker": "^3.0.3",
++        "js-tokens": "^10.0.0"
++      }
++    },
++    "node_modules/ast-v8-to-istanbul/node_modules/js-tokens": {
++      "version": "10.0.0",
++      "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-10.0.0.tgz",
++      "integrity": "sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/async-function": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/async-function/-/async-function-1.0.0.tgz",
+@@ -3583,6 +4090,16 @@
+       ],
+       "license": "CC-BY-4.0"
+     },
++    "node_modules/chai": {
++      "version": "6.2.2",
++      "resolved": "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz",
++      "integrity": "sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/chalk": {
+       "version": "4.1.2",
+       "resolved": "https://registry.npmjs.org/chalk/-/chalk-4.1.2.tgz",
+@@ -4007,6 +4524,13 @@
+         "node": ">= 0.4"
+       }
+     },
++    "node_modules/es-module-lexer": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.1.0.tgz",
++      "integrity": "sha512-n27zTYMjYu1aj4MjCWzSP7G9r75utsaoc8m61weK+W8JMBGGQybd43GstCXZ3WNmSFtGT9wi59qQTW6mhTR5LQ==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/es-object-atoms": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.2.tgz",
+@@ -4486,6 +5010,16 @@
+         "node": ">=4.0"
+       }
+     },
++    "node_modules/estree-walker": {
++      "version": "3.0.3",
++      "resolved": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
++      "integrity": "sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree": "^1.0.0"
++      }
++    },
+     "node_modules/esutils": {
+       "version": "2.0.3",
+       "resolved": "https://registry.npmjs.org/esutils/-/esutils-2.0.3.tgz",
+@@ -4496,6 +5030,16 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/expect-type": {
++      "version": "1.4.0",
++      "resolved": "https://registry.npmjs.org/expect-type/-/expect-type-1.4.0.tgz",
++      "integrity": "sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=12.0.0"
++      }
++    },
+     "node_modules/fast-deep-equal": {
+       "version": "3.1.3",
+       "resolved": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
+@@ -4637,6 +5181,21 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/fsevents": {
++      "version": "2.3.3",
++      "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
++      "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
++      "dev": true,
++      "hasInstallScript": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": "^8.16.0 || ^10.6.0 || >=11.0.0"
++      }
++    },
+     "node_modules/function-bind": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
+@@ -4951,6 +5510,13 @@
+         "hermes-estree": "0.25.1"
+       }
+     },
++    "node_modules/html-escaper": {
++      "version": "2.0.2",
++      "resolved": "https://registry.npmjs.org/html-escaper/-/html-escaper-2.0.2.tgz",
++      "integrity": "sha512-H2iMtd0I4Mt5eYiapRdIDjp+XzelXQ0tFE4JS7YFwFevXXMmOp9myNrUvCg0D6ws8iqkRPBfKHgbwig1SmlLfg==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/iceberg-js": {
+       "version": "0.8.1",
+       "resolved": "https://registry.npmjs.org/iceberg-js/-/iceberg-js-0.8.1.tgz",
+@@ -5441,6 +6007,45 @@
+       "dev": true,
+       "license": "ISC"
+     },
++    "node_modules/istanbul-lib-coverage": {
++      "version": "3.2.2",
++      "resolved": "https://registry.npmjs.org/istanbul-lib-coverage/-/istanbul-lib-coverage-3.2.2.tgz",
++      "integrity": "sha512-O8dpsF+r0WV/8MNRKfnmrtCWhuKjxrq2w+jpzBL5UZKTi2LeVWnWOmWRxFlesJONmc+wLAGvKQZEOanko0LFTg==",
++      "dev": true,
++      "license": "BSD-3-Clause",
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/istanbul-lib-report": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/istanbul-lib-report/-/istanbul-lib-report-3.0.1.tgz",
++      "integrity": "sha512-GCfE1mtsHGOELCU8e/Z7YWzpmybrx/+dSTfLrvY8qRmaY6zXTKWn6WQIjaAFw069icm6GVMNkgu0NzI4iPZUNw==",
++      "dev": true,
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "istanbul-lib-coverage": "^3.0.0",
++        "make-dir": "^4.0.0",
++        "supports-color": "^7.1.0"
++      },
++      "engines": {
++        "node": ">=10"
++      }
++    },
++    "node_modules/istanbul-reports": {
++      "version": "3.2.0",
++      "resolved": "https://registry.npmjs.org/istanbul-reports/-/istanbul-reports-3.2.0.tgz",
++      "integrity": "sha512-HGYWWS/ehqTV3xN10i23tkPkpH46MLCIMFNCaaKNavAXTF1RkqxawEPtnjnGZ6XKSInBKkiOA5BKS+aZiY3AvA==",
++      "dev": true,
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "html-escaper": "^2.0.0",
++        "istanbul-lib-report": "^3.0.0"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/iterator.prototype": {
+       "version": "1.1.5",
+       "resolved": "https://registry.npmjs.org/iterator.prototype/-/iterator.prototype-1.1.5.tgz",
+@@ -5932,6 +6537,47 @@
+         "@jridgewell/sourcemap-codec": "^1.5.5"
+       }
+     },
++    "node_modules/magicast": {
++      "version": "0.5.3",
++      "resolved": "https://registry.npmjs.org/magicast/-/magicast-0.5.3.tgz",
++      "integrity": "sha512-pVKE4UdSQ7DvHzivsCIFx2BJn1mHG6KsyrFcaxFx6tONdneEuThrDx0Cj3AMg58KyN4pzYT+LHOotxDQDjNvkw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@babel/parser": "^7.29.3",
++        "@babel/types": "^7.29.0",
++        "source-map-js": "^1.2.1"
++      }
++    },
++    "node_modules/make-dir": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/make-dir/-/make-dir-4.0.0.tgz",
++      "integrity": "sha512-hXdUTZYIVOt1Ex//jAQi+wTZZpUpwBj/0QsOzqegb3rGMMeJiSEu5xLHnYfBrRV4RH2+OCSOO95Is/7x1WJ4bw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "semver": "^7.5.3"
++      },
++      "engines": {
++        "node": ">=10"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
++    "node_modules/make-dir/node_modules/semver": {
++      "version": "7.8.5",
++      "resolved": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
++      "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",
++      "dev": true,
++      "license": "ISC",
++      "bin": {
++        "semver": "bin/semver.js"
++      },
++      "engines": {
++        "node": ">=10"
++      }
++    },
+     "node_modules/math-intrinsics": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
+@@ -6270,6 +6916,20 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/obug": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/obug/-/obug-2.1.3.tgz",
++      "integrity": "sha512-9miFgM2OFba7hB+pRgvtV84pYTBaoTHohvmIgiRt6dRIzbwEOIaNaP+dIlGs2fNFoB0SeISs0Jz5WFVRid6Xyg==",
++      "dev": true,
++      "funding": [
++        "https://github.com/sponsors/sxzz",
++        "https://opencollective.com/debug"
++      ],
++      "license": "MIT",
++      "engines": {
++        "node": ">=12.20.0"
++      }
++    },
+     "node_modules/optionator": {
+       "version": "0.9.4",
+       "resolved": "https://registry.npmjs.org/optionator/-/optionator-0.9.4.tgz",
+@@ -6378,6 +7038,13 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/pathe": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/pathe/-/pathe-2.0.3.tgz",
++      "integrity": "sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/picocolors": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+@@ -6685,6 +7352,40 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/rolldown": {
++      "version": "1.1.3",
++      "resolved": "https://registry.npmjs.org/rolldown/-/rolldown-1.1.3.tgz",
++      "integrity": "sha512-1F1eEtUBtFvcGm1HQ9TiUIUHPQG7mSAODrhIzjxoUEFuo8OcbrGLiVLkevNgj84TE4lnHvnumwFjhJO5Eu135g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@oxc-project/types": "=0.137.0",
++        "@rolldown/pluginutils": "^1.0.0"
++      },
++      "bin": {
++        "rolldown": "bin/cli.mjs"
++      },
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      },
++      "optionalDependencies": {
++        "@rolldown/binding-android-arm64": "1.1.3",
++        "@rolldown/binding-darwin-arm64": "1.1.3",
++        "@rolldown/binding-darwin-x64": "1.1.3",
++        "@rolldown/binding-freebsd-x64": "1.1.3",
++        "@rolldown/binding-linux-arm-gnueabihf": "1.1.3",
++        "@rolldown/binding-linux-arm64-gnu": "1.1.3",
++        "@rolldown/binding-linux-arm64-musl": "1.1.3",
++        "@rolldown/binding-linux-ppc64-gnu": "1.1.3",
++        "@rolldown/binding-linux-s390x-gnu": "1.1.3",
++        "@rolldown/binding-linux-x64-gnu": "1.1.3",
++        "@rolldown/binding-linux-x64-musl": "1.1.3",
++        "@rolldown/binding-openharmony-arm64": "1.1.3",
++        "@rolldown/binding-wasm32-wasi": "1.1.3",
++        "@rolldown/binding-win32-arm64-msvc": "1.1.3",
++        "@rolldown/binding-win32-x64-msvc": "1.1.3"
++      }
++    },
+     "node_modules/run-parallel": {
+       "version": "1.2.0",
+       "resolved": "https://registry.npmjs.org/run-parallel/-/run-parallel-1.2.0.tgz",
+@@ -6986,6 +7687,13 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/siginfo": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz",
++      "integrity": "sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==",
++      "dev": true,
++      "license": "ISC"
++    },
+     "node_modules/source-map-js": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+@@ -7002,6 +7710,20 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/stackback": {
++      "version": "0.0.2",
++      "resolved": "https://registry.npmjs.org/stackback/-/stackback-0.0.2.tgz",
++      "integrity": "sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/std-env": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/std-env/-/std-env-4.1.0.tgz",
++      "integrity": "sha512-Rq7ybcX2RuC55r9oaPVEW7/xu3tj8u4GeBYHBWCychFtzMIr86A7e3PPEBPT37sHStKX3+TiX/Fr/ACmJLVlLQ==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/stop-iteration-iterator": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/stop-iteration-iterator/-/stop-iteration-iterator-1.1.0.tgz",
+@@ -7233,6 +7955,23 @@
+         "url": "https://opencollective.com/webpack"
+       }
+     },
++    "node_modules/tinybench": {
++      "version": "2.9.0",
++      "resolved": "https://registry.npmjs.org/tinybench/-/tinybench-2.9.0.tgz",
++      "integrity": "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/tinyexec": {
++      "version": "1.2.4",
++      "resolved": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.2.4.tgz",
++      "integrity": "sha512-SHf/r48b7vOrjve9PxJo3MN5v5yuyjHvdUcrQffT3WXMUfnGmHDVbC4k3sHJaJTgZCwpUplIaAo5ANtMyp3YHg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
+     "node_modules/tinyglobby": {
+       "version": "0.2.17",
+       "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+@@ -7281,6 +8020,16 @@
+         "url": "https://github.com/sponsors/jonschlinkert"
+       }
+     },
++    "node_modules/tinyrainbow": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.1.0.tgz",
++      "integrity": "sha512-Bf+ILmBgretUrdJxzXM0SgXLZ3XfiaUuOj/IKQHuTXip+05Xn+uyEYdVg0kYDipTBcLrCVyUzAPz7QmArb0mmw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=14.0.0"
++      }
++    },
+     "node_modules/to-regex-range": {
+       "version": "5.0.1",
+       "resolved": "https://registry.npmjs.org/to-regex-range/-/to-regex-range-5.0.1.tgz",
+@@ -7616,6 +8365,200 @@
+         }
+       }
+     },
++    "node_modules/vite": {
++      "version": "8.1.0",
++      "resolved": "https://registry.npmjs.org/vite/-/vite-8.1.0.tgz",
++      "integrity": "sha512-BuJcQK/56NQTWDGn4ABea3q4SSBdNPWwNZKTkkUpcMPnLoquSYH8llRtSUIgoL1KSCpHt5eghLShn50mH36y7Q==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "lightningcss": "^1.32.0",
++        "picomatch": "^4.0.4",
++        "postcss": "^8.5.15",
++        "rolldown": "~1.1.2",
++        "tinyglobby": "^0.2.17"
++      },
++      "bin": {
++        "vite": "bin/vite.js"
++      },
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      },
++      "funding": {
++        "url": "https://github.com/vitejs/vite?sponsor=1"
++      },
++      "optionalDependencies": {
++        "fsevents": "~2.3.3"
++      },
++      "peerDependencies": {
++        "@types/node": "^20.19.0 || >=22.12.0",
++        "@vitejs/devtools": "^0.3.0",
++        "esbuild": "^0.27.0 || ^0.28.0",
++        "jiti": ">=1.21.0",
++        "less": "^4.0.0",
++        "sass": "^1.70.0",
++        "sass-embedded": "^1.70.0",
++        "stylus": ">=0.54.8",
++        "sugarss": "^5.0.0",
++        "terser": "^5.16.0",
++        "tsx": "^4.8.1",
++        "yaml": "^2.4.2"
++      },
++      "peerDependenciesMeta": {
++        "@types/node": {
++          "optional": true
++        },
++        "@vitejs/devtools": {
++          "optional": true
++        },
++        "esbuild": {
++          "optional": true
++        },
++        "jiti": {
++          "optional": true
++        },
++        "less": {
++          "optional": true
++        },
++        "sass": {
++          "optional": true
++        },
++        "sass-embedded": {
++          "optional": true
++        },
++        "stylus": {
++          "optional": true
++        },
++        "sugarss": {
++          "optional": true
++        },
++        "terser": {
++          "optional": true
++        },
++        "tsx": {
++          "optional": true
++        },
++        "yaml": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/vite/node_modules/picomatch": {
++      "version": "4.0.4",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz",
++      "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/jonschlinkert"
++      }
++    },
++    "node_modules/vitest": {
++      "version": "4.1.9",
++      "resolved": "https://registry.npmjs.org/vitest/-/vitest-4.1.9.tgz",
++      "integrity": "sha512-nE3/LEyc0z87uHYLZebqCUOaJr2hdtuPp7BQ4BosVFnfltxgAvMG08NyrSGlPpOUWvR27c5flSmYFTNr78L9GQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@vitest/expect": "4.1.9",
++        "@vitest/mocker": "4.1.9",
++        "@vitest/pretty-format": "4.1.9",
++        "@vitest/runner": "4.1.9",
++        "@vitest/snapshot": "4.1.9",
++        "@vitest/spy": "4.1.9",
++        "@vitest/utils": "4.1.9",
++        "es-module-lexer": "^2.0.0",
++        "expect-type": "^1.3.0",
++        "magic-string": "^0.30.21",
++        "obug": "^2.1.1",
++        "pathe": "^2.0.3",
++        "picomatch": "^4.0.3",
++        "std-env": "^4.0.0-rc.1",
++        "tinybench": "^2.9.0",
++        "tinyexec": "^1.0.2",
++        "tinyglobby": "^0.2.15",
++        "tinyrainbow": "^3.1.0",
++        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
++        "why-is-node-running": "^2.3.0"
++      },
++      "bin": {
++        "vitest": "vitest.mjs"
++      },
++      "engines": {
++        "node": "^20.0.0 || ^22.0.0 || >=24.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "@edge-runtime/vm": "*",
++        "@opentelemetry/api": "^1.9.0",
++        "@types/node": "^20.0.0 || ^22.0.0 || >=24.0.0",
++        "@vitest/browser-playwright": "4.1.9",
++        "@vitest/browser-preview": "4.1.9",
++        "@vitest/browser-webdriverio": "4.1.9",
++        "@vitest/coverage-istanbul": "4.1.9",
++        "@vitest/coverage-v8": "4.1.9",
++        "@vitest/ui": "4.1.9",
++        "happy-dom": "*",
++        "jsdom": "*",
++        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
++      },
++      "peerDependenciesMeta": {
++        "@edge-runtime/vm": {
++          "optional": true
++        },
++        "@opentelemetry/api": {
++          "optional": true
++        },
++        "@types/node": {
++          "optional": true
++        },
++        "@vitest/browser-playwright": {
++          "optional": true
++        },
++        "@vitest/browser-preview": {
++          "optional": true
++        },
++        "@vitest/browser-webdriverio": {
++          "optional": true
++        },
++        "@vitest/coverage-istanbul": {
++          "optional": true
++        },
++        "@vitest/coverage-v8": {
++          "optional": true
++        },
++        "@vitest/ui": {
++          "optional": true
++        },
++        "happy-dom": {
++          "optional": true
++        },
++        "jsdom": {
++          "optional": true
++        },
++        "vite": {
++          "optional": false
++        }
++      }
++    },
++    "node_modules/vitest/node_modules/picomatch": {
++      "version": "4.0.4",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.4.tgz",
++      "integrity": "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/jonschlinkert"
++      }
++    },
+     "node_modules/which": {
+       "version": "2.0.2",
+       "resolved": "https://registry.npmjs.org/which/-/which-2.0.2.tgz",
+@@ -7721,6 +8664,23 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/why-is-node-running": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz",
++      "integrity": "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "siginfo": "^2.0.0",
++        "stackback": "0.0.2"
++      },
++      "bin": {
++        "why-is-node-running": "cli.js"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
+     "node_modules/word-wrap": {
+       "version": "1.2.5",
+       "resolved": "https://registry.npmjs.org/word-wrap/-/word-wrap-1.2.5.tgz",
+diff --git a/worldcup-app/package.json b/worldcup-app/package.json
+index a08a0b6..85c8c0c 100644
+--- a/worldcup-app/package.json
++++ b/worldcup-app/package.json
+@@ -6,7 +6,10 @@
+     "dev": "next dev",
+     "build": "next build",
+     "start": "next start",
+-    "lint": "eslint"
++    "lint": "eslint",
++    "test": "vitest run",
++    "test:watch": "vitest",
++    "test:coverage": "vitest run --coverage"
+   },
+   "dependencies": {
+     "@radix-ui/react-dialog": "^1.1.16",
+@@ -32,9 +35,11 @@
+     "@types/node": "^20",
+     "@types/react": "^19",
+     "@types/react-dom": "^19",
++    "@vitest/coverage-v8": "^4.1.9",
+     "eslint": "^9",
+     "eslint-config-next": "16.2.9",
+     "tailwindcss": "^4",
+-    "typescript": "^5"
++    "typescript": "^5",
++    "vitest": "^4.1.9"
+   }
+ }
+diff --git a/worldcup-app/src/__tests__/benchmarks.test.ts b/worldcup-app/src/__tests__/benchmarks.test.ts
+new file mode 100644
+index 0000000..90c6fe0
+--- /dev/null
++++ b/worldcup-app/src/__tests__/benchmarks.test.ts
+@@ -0,0 +1,187 @@
++// Performance benchmarks for the learning pipeline.
++// Targets:
++//   buildRecommendationInsight() < 10 ms
++//   generateLearningSignals(100) < 50 ms
++//   generateAllReviews(100)      < 200 ms
++//   buildRecommendation()×100    < 100 ms
++
++import { describe, it, expect } from 'vitest'
++import { buildRecommendation } from '@/lib/recommendation-engine'
++import { generateAllReviews } from '@/lib/match-review'
++import { generateLearningSignals } from '@/lib/learning-signals'
++import { buildRecommendationInsight } from '@/lib/recommendation-insight'
++import { buildDecisionSupport } from '@/lib/decision-support'
++import { makeTeam, makeFixture, makeAllPreds, makeResult, makeLocked, makePoolRec, QUAL_UNKNOWN } from './test-factories'
++import type { MatchReview } from '@/lib/match-review'
++
++// ── Data factories ────────────────────────────────────────────────────────────
++
++function makeFixtures(n: number) {
++  return Array.from({ length: n }, (_, i) => makeFixture(`fix${i}`, `team${i % 32}`, `team${(i + 1) % 32}`, Math.floor(i / 16) + 1))
++}
++
++function makeTeams(n = 32) {
++  return Array.from({ length: n }, (_, i) => makeTeam(`team${i}`, `T${i}`, 1500 + i))
++}
++
++function makePredictions(fixtures: ReturnType<typeof makeFixtures>) {
++  return fixtures.flatMap(f => makeAllPreds(f.id, 1.5, 1.0))
++}
++
++function makeResults(fixtures: ReturnType<typeof makeFixtures>) {
++  return fixtures.map((f, i) => makeResult(f.id, i % 3 === 0 ? 2 : i % 3 === 1 ? 1 : 0, i % 3 === 0 ? 0 : i % 3 === 1 ? 1 : 2))
++}
++
++function makeLockedMany(fixtures: ReturnType<typeof makeFixtures>) {
++  return fixtures.map((f, i) => makeLocked(f.id, i % 2 === 0 ? 2 : 1, i % 2 === 0 ? 0 : 1, i % 5 === 0))
++}
++
++function makePoolRecs(fixtures: ReturnType<typeof makeFixtures>) {
++  return fixtures.map(f => makePoolRec(f.id, 2, 0))
++}
++
++function makeReviews(n: number): MatchReview[] {
++  const blindSpots: MatchReview['blindSpot'][] = ['over_predicted_goals', 'random_variance', 'favourite_overestimated', 'away_attack_underestimated', 'correct']
++  return Array.from({ length: n }, (_, i) => ({
++    fixtureId: `f${i}`, homeCode: 'A', awayCode: 'B',
++    engineH: 2, engineA: 0, myH: 2, myA: 0,
++    actualH: 1, actualA: 0, myPts: 1, enginePts: 1,
++    overridden: false, overrideReason: null,
++    evidence: [], verdict: 'Both missed' as const,
++    lesson: '', blindSpot: blindSpots[i % blindSpots.length],
++    deltaVsEngine: i % 3 === 0 ? 1 : 0,
++  }))
++}
++
++// ── Benchmarks ────────────────────────────────────────────────────────────────
++
++describe('Performance: buildRecommendation', () => {
++  it('runs 100 recommendations in < 100 ms', () => {
++    const preds = makeAllPreds('f1', 1.5, 1.0)
++    const start = performance.now()
++    for (let i = 0; i < 100; i++) buildRecommendation(preds)
++    const elapsed = performance.now() - start
++    console.log(`buildRecommendation ×100: ${elapsed.toFixed(1)} ms`)
++    expect(elapsed).toBeLessThan(100)
++  })
++})
++
++describe('Performance: generateAllReviews', () => {
++  it('100 fixtures processed in < 200 ms', () => {
++    const fixtures = makeFixtures(100)
++    const teams = makeTeams(32)
++    const results = makeResults(fixtures)
++    const locked = makeLockedMany(fixtures)
++    const recs = makePoolRecs(fixtures)
++
++    const start = performance.now()
++    const reviews = generateAllReviews({
++      fixtures, teams,
++      lockedPredictions: locked,
++      poolRecommendations: recs,
++      results, adjustments: [], qualMap: {},
++    })
++    const elapsed = performance.now() - start
++
++    console.log(`generateAllReviews(100): ${elapsed.toFixed(1)} ms → ${reviews.length} reviews`)
++    expect(reviews).toHaveLength(100)
++    expect(elapsed).toBeLessThan(200)
++  })
++})
++
++describe('Performance: generateLearningSignals', () => {
++  it('100 reviews processed in < 50 ms', () => {
++    const reviews = makeReviews(100)
++    const start = performance.now()
++    const signals = generateLearningSignals(reviews)
++    const elapsed = performance.now() - start
++    console.log(`generateLearningSignals(100): ${elapsed.toFixed(1)} ms → ${signals.length} signals`)
++    expect(elapsed).toBeLessThan(50)
++  })
++
++  it('500 reviews (tournament scale) processed in < 200 ms', () => {
++    const reviews = makeReviews(500)
++    const start = performance.now()
++    generateLearningSignals(reviews)
++    const elapsed = performance.now() - start
++    console.log(`generateLearningSignals(500): ${elapsed.toFixed(1)} ms`)
++    expect(elapsed).toBeLessThan(200)
++  })
++})
++
++describe('Performance: buildRecommendationInsight', () => {
++  it('single insight built in < 10 ms', () => {
++    const preds = makeAllPreds('f1', 1.5, 1.0)
++    const rec = buildRecommendation(preds)!
++    const support = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++
++    const start = performance.now()
++    buildRecommendationInsight({ fixtureId: 'f1', rec, support, now: '2026-06-15T10:00:00Z' })
++    const elapsed = performance.now() - start
++    console.log(`buildRecommendationInsight: ${elapsed.toFixed(2)} ms`)
++    expect(elapsed).toBeLessThan(10)
++  })
++
++  it('48 insights (full group stage) built in < 100 ms', () => {
++    const preds = makeAllPreds('f1', 1.5, 1.0)
++    const rec = buildRecommendation(preds)!
++    const support = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++
++    const start = performance.now()
++    for (let i = 0; i < 48; i++) {
++      buildRecommendationInsight({ fixtureId: `f${i}`, rec, support, now: '2026-06-15T10:00:00Z' })
++    }
++    const elapsed = performance.now() - start
++    console.log(`buildRecommendationInsight ×48: ${elapsed.toFixed(1)} ms`)
++    expect(elapsed).toBeLessThan(100)
++  })
++})
++
++describe('Performance: full pipeline end-to-end (48 fixtures)', () => {
++  it('recommendation + review + signals + insight for 48 fixtures < 500 ms', () => {
++    const fixtures = makeFixtures(48)
++    const teams = makeTeams(32)
++    const results = makeResults(fixtures)
++    const locked = makeLockedMany(fixtures)
++    const poolRecs = makePoolRecs(fixtures)
++    const preds = makePredictions(fixtures)
++
++    const start = performance.now()
++
++    const fixturePreds = fixtures.map(f => preds.filter(p => p.fixture_id === f.id))
++    const recs = fixturePreds.map(fp => buildRecommendation(fp)).filter(Boolean)
++
++    const reviews = generateAllReviews({
++      fixtures, teams,
++      lockedPredictions: locked,
++      poolRecommendations: poolRecs,
++      results, adjustments: [], qualMap: {},
++    })
++
++    const signals = generateLearningSignals(reviews)
++
++    recs.forEach((rec, i) => {
++      const support = buildDecisionSupport({
++        rec: rec!, homeAdj: undefined, awayAdj: undefined,
++        homeStanding: undefined, awayStanding: undefined,
++        homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++        apiCtx: undefined, home: undefined, away: undefined,
++      })
++      buildRecommendationInsight({ fixtureId: `fix${i}`, rec: rec!, support, now: '2026-06-15T10:00:00Z' })
++    })
++
++    const elapsed = performance.now() - start
++    console.log(`Full pipeline (48 fixtures): ${elapsed.toFixed(1)} ms, ${signals.length} signals`)
++    expect(elapsed).toBeLessThan(500)
++  })
++})
+diff --git a/worldcup-app/src/__tests__/decision-support-net-effect.test.ts b/worldcup-app/src/__tests__/decision-support-net-effect.test.ts
+new file mode 100644
+index 0000000..cae9934
+--- /dev/null
++++ b/worldcup-app/src/__tests__/decision-support-net-effect.test.ts
+@@ -0,0 +1,301 @@
++// Regression tests freezing the exact netEffect sentence produced by buildDecisionSupport.
++// These cover every branch in the netEffect derivation (8 distinct paths).
++// If the verdict wording changes, these tests fail — that's the point.
++
++import { describe, it, expect } from 'vitest'
++import { buildDecisionSupport } from '@/lib/decision-support'
++import type { Recommendation } from '@/lib/recommendation-engine'
++import { makeTeam, makeStanding, makeAdj, makeMatchContext, QUAL_UNKNOWN, QUAL_MUST_WIN, QUAL_ROTATION, QUAL_ELIMINATED } from './test-factories'
++
++// ── Helpers ───────────────────────────────────────────────────────────────────
++
++function makeRec(
++  agreement: 'full' | 'majority' | 'split',
++  confidence: 'High' | 'Medium' | 'Low' = 'High',
++  scoreline = { home: 2, away: 0 },
++): Recommendation {
++  return {
++    scoreline,
++    confidence,
++    rationale: [],
++    alternatives: [],
++    agreement,
++    avgXgHome: 2.0,
++    avgXgAway: 0.5,
++    outcomeProbs: { home: 0.60, draw: 0.25, away: 0.15 },
++    modelScorelines: {
++      A: { h: scoreline.home, a: scoreline.away },
++      B: agreement === 'split' ? { h: 0, a: 2 } : { h: scoreline.home, a: scoreline.away },
++      C: agreement === 'full'  ? { h: scoreline.home, a: scoreline.away } : { h: 1, a: 1 },
++    },
++  }
++}
++
++const COL = makeTeam('col', 'COL', 1780, 'K')
++const QAT = makeTeam('qat', 'QAT', 1550, 'B')
++const CIV = makeTeam('civ', 'CIV', 1700, 'E')
++
++// ── Path 1: Only model agreement, no other context ────────────────────────────
++// full → support=['All 3 models agree']; challenge=[]; s=1, c=0, none, s<2
++// → 'No strong context signals — rely on engine confidence alone.'
++
++describe('netEffect: no strong context signals', () => {
++  it('full agreement with no other context → no strong signals', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.netEffect).toBe(
++      'No strong context signals — rely on engine confidence alone.',
++    )
++  })
++
++  it('majority agreement with no other context → no strong signals', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('majority'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.netEffect).toBe(
++      'No strong context signals — rely on engine confidence alone.',
++    )
++  })
++})
++
++// ── Path 2: No challenge, s >= 2, High confidence ─────────────────────────────
++// full (s=1) + homeStanding confirms scoring (s=2); c=0; none; High
++// → 'Context fully supports this pick — high confidence.'
++
++describe('netEffect: context fully supports (High confidence)', () => {
++  it('full agreement + strong home standing → context fully supports', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: makeStanding('col', 2, 2, 5, 0),  // avgGf=2.5, supports predH>=2
++      awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.netEffect).toBe(
++      'Context fully supports this pick — high confidence.',
++    )
++  })
++
++  it('full agreement + must-win home + engine predicts home win → fully supports', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High'),   // scoreline 2-0
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_MUST_WIN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: COL, away: undefined,
++    })
++    expect(support.supportFactors).toHaveLength(2)
++    expect(support.netEffect).toBe(
++      'Context fully supports this pick — high confidence.',
++    )
++  })
++})
++
++// ── Path 3: No challenge, s >= 2, Medium/Low confidence ─────────────────────
++// → 'Context supports the pick. No significant concerns.'
++
++describe('netEffect: context supports (Medium confidence)', () => {
++  it('full agreement + strong home standing + Medium confidence → supports without high confidence label', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'Medium'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: makeStanding('col', 2, 2, 5, 0),
++      awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.netEffect).toBe(
++      'Context supports the pick. No significant concerns.',
++    )
++  })
++})
++
++// ── Path 4: Minor challenge, s >= 2 ──────────────────────────────────────────
++// full (s=1) + homeStanding (s=2) + rotation_risk (c=1); minor; s=2>=2
++// → 'Context broadly supports the pick, but one factor deserves attention before locking.'
++
++describe('netEffect: minor challenge with broad support', () => {
++  it('strong support + single rotation_risk challenge → broadly supports with caveat', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: makeStanding('col', 2, 2, 5, 0),
++      awayStanding: undefined,
++      homeQual: QUAL_ROTATION, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.challengeLevel).toBe('minor')
++    expect(support.netEffect).toBe(
++      'Context broadly supports the pick, but one factor deserves attention before locking.',
++    )
++  })
++})
++
++// ── Path 5: Minor challenge, s < 2 ───────────────────────────────────────────
++// full (s=1) + rotation_risk (c=1); minor; s=1<2
++// → 'One context factor challenges this pick — proceed with some caution.'
++
++describe('netEffect: minor challenge with limited support', () => {
++  it('full agreement only + rotation_risk → one factor caution', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_ROTATION, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.challengeLevel).toBe('minor')
++    expect(support.supportFactors).toHaveLength(1)
++    expect(support.netEffect).toBe(
++      'One context factor challenges this pick — proceed with some caution.',
++    )
++  })
++
++  it('full agreement + must-win mismatch (engine predicts away win) → caution', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High', { home: 0, away: 2 }),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_MUST_WIN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: COL, away: undefined,
++    })
++    expect(support.challengeFactors.some(f => f.includes('must win'))).toBe(true)
++    expect(support.challengeLevel).toBe('minor')
++    expect(support.netEffect).toBe(
++      'One context factor challenges this pick — proceed with some caution.',
++    )
++  })
++})
++
++// ── Path 6: Significant challenge, non-Low/Medium-Low contextConfidence ───────
++// split (c=1) + eliminated away (c=2); no rotation_risk; High rec base → Medium after 2 step-downs
++// → 'Multiple context factors argue against this scoreline — review alternatives before locking.'
++
++describe('netEffect: significant challenge — review alternatives', () => {
++  it('significant challenge with non-Low contextConfidence → review alternatives', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('split', 'High'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_ELIMINATED,
++      apiCtx: undefined, home: undefined, away: QAT,
++    })
++    expect(support.challengeLevel).toBe('significant')
++    expect(support.contextConfidence).not.toMatch(/^(Low|Medium-Low)$/)
++    expect(support.netEffect).toBe(
++      'Multiple context factors argue against this scoreline — review alternatives before locking.',
++    )
++  })
++})
++
++// ── Path 7: Significant challenge, Low/Medium-Low contextConfidence ───────────
++// → 'Context strongly challenges this pick — lean toward an alternative or lower your stake.'
++
++describe('netEffect: significant challenge — strongly challenges', () => {
++  it('Low rec confidence + significant challenge → strongly challenges', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('split', 'Low'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_ROTATION, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.challengeLevel).toBe('significant')
++    expect(support.contextConfidence).toMatch(/^(Low|Medium-Low)$/)
++    expect(support.netEffect).toBe(
++      'Context strongly challenges this pick — lean toward an alternative or lower your stake.',
++    )
++  })
++
++  it('Medium rec + significant challenge + rotation_risk → Low conf → strongly challenges', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('split', 'Medium'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_ROTATION, awayQual: QUAL_ELIMINATED,
++      apiCtx: undefined, home: undefined, away: QAT,
++    })
++    expect(support.challengeLevel).toBe('significant')
++    expect(support.contextConfidence).toMatch(/^(Low|Medium-Low)$/)
++    expect(support.netEffect).toBe(
++      'Context strongly challenges this pick — lean toward an alternative or lower your stake.',
++    )
++  })
++})
++
++// ── Rotation risk scenarios ───────────────────────────────────────────────────
++
++describe('netEffect: rotation risk scenarios', () => {
++  it('home rotation risk alone → minor challenge → proceed with caution', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_ROTATION, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.challengeFactors.some(f => f.includes('rotation'))).toBe(true)
++    expect(support.challengeLevel).toBe('minor')
++    expect(support.netEffect).toBe(
++      'One context factor challenges this pick — proceed with some caution.',
++    )
++  })
++
++  it('both teams rotation risk → significant challenge', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_ROTATION, awayQual: QUAL_ROTATION,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    expect(support.challengeLevel).toBe('significant')
++    expect(support.contextConfidence).toMatch(/^(Low|Medium-Low)$/)
++    expect(support.netEffect).toBe(
++      'Context strongly challenges this pick — lean toward an alternative or lower your stake.',
++    )
++  })
++})
++
++// ── API context — absences ────────────────────────────────────────────────────
++
++describe('netEffect: API context — absences', () => {
++  it('2+ home absences add challenge factor → minor challenge', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: makeMatchContext('f1', ['player1', 'player2'], []),
++      home: COL, away: undefined,
++    })
++    expect(support.challengeFactors.some(f => f.includes('missing'))).toBe(true)
++    expect(support.challengeLevel).toBe('minor')
++    expect(support.netEffect).toBe(
++      'One context factor challenges this pick — proceed with some caution.',
++    )
++  })
++
++  it('absences on both sides → significant challenge', () => {
++    const support = buildDecisionSupport({
++      rec: makeRec('full', 'High'),
++      homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: makeMatchContext('f1', ['p1', 'p2'], ['p3', 'p4']),
++      home: COL, away: CIV,
++    })
++    expect(support.challengeLevel).toBe('significant')
++    expect(support.netEffect).toMatch(/(review alternatives|lean toward an alternative)/)
++  })
++})
+diff --git a/worldcup-app/src/__tests__/exact-score-analysis.test.ts b/worldcup-app/src/__tests__/exact-score-analysis.test.ts
+new file mode 100644
+index 0000000..c24c406
+--- /dev/null
++++ b/worldcup-app/src/__tests__/exact-score-analysis.test.ts
+@@ -0,0 +1,104 @@
++import { describe, it, expect } from 'vitest'
++import { buildExactScoreProfile } from '@/lib/exact-score-analysis'
++import type { MatchReview } from '@/lib/match-review'
++
++function makeReview(myH: number, myA: number, actualH: number, actualA: number, myPts: number, engineH: number | null = null, engineA: number | null = null): MatchReview {
++  return {
++    fixtureId: 'f1',
++    homeCode: 'A', awayCode: 'B',
++    engineH, engineA,
++    myH, myA, actualH, actualA,
++    myPts, enginePts: null,
++    overridden: false, overrideReason: null,
++    evidence: [], verdict: 'Both missed', lesson: '',
++    blindSpot: 'random_variance', deltaVsEngine: null,
++  }
++}
++
++describe('buildExactScoreProfile', () => {
++  it('returns zero distribution for empty reviews', () => {
++    const profile = buildExactScoreProfile([])
++    expect(profile.distribution.total).toBe(0)
++    expect(profile.avgPts).toBe(0)
++  })
++
++  it('correctly counts point distribution', () => {
++    const reviews = [
++      makeReview(2, 1, 2, 1, 4),
++      makeReview(3, 1, 2, 0, 2),
++      makeReview(1, 0, 3, 1, 1),
++      makeReview(2, 0, 0, 2, 0),
++    ]
++    const profile = buildExactScoreProfile(reviews)
++    expect(profile.distribution.exact).toBe(1)
++    expect(profile.distribution.gdWin).toBe(1)
++    expect(profile.distribution.winOnly).toBe(1)
++    expect(profile.distribution.miss).toBe(1)
++    expect(profile.distribution.total).toBe(4)
++  })
++
++  it('computes avgPts correctly', () => {
++    const reviews = [
++      makeReview(2, 1, 2, 1, 4),
++      makeReview(2, 0, 0, 2, 0),
++    ]
++    const profile = buildExactScoreProfile(reviews)
++    expect(profile.avgPts).toBe(2)
++  })
++
++  it('homeGoalBias: positive means over-predicting home goals', () => {
++    // Predicted 2, actual 1 → bias = +1
++    const reviews = [
++      makeReview(2, 0, 1, 0, 1),
++      makeReview(2, 0, 1, 0, 1),
++    ]
++    const profile = buildExactScoreProfile(reviews)
++    expect(profile.homeGoalBias).toBe(1)
++  })
++
++  it('awayGoalBias: negative means under-predicting away goals', () => {
++    // Predicted 0, actual 2 → bias = -2
++    const reviews = [
++      makeReview(1, 0, 1, 2, 1),
++      makeReview(1, 0, 1, 2, 1),
++    ]
++    const profile = buildExactScoreProfile(reviews)
++    expect(profile.awayGoalBias).toBe(-2)
++  })
++
++  it('tracks missed patterns when engine rec exists', () => {
++    const reviews = [
++      makeReview(1, 0, 2, 1, 1, 1, 0),
++      makeReview(1, 0, 2, 1, 1, 1, 0),
++      makeReview(1, 0, 2, 1, 1, 1, 0),
++    ]
++    const profile = buildExactScoreProfile(reviews)
++    expect(profile.missedPatterns).toHaveLength(1)
++    expect(profile.missedPatterns[0].count).toBe(3)
++    expect(profile.missedPatterns[0].predicted).toBe('1–0')
++    expect(profile.missedPatterns[0].actual).toBe('2–1')
++  })
++
++  it('does not include patterns with count < 2', () => {
++    const reviews = [makeReview(1, 0, 2, 1, 1, 1, 0)]
++    const profile = buildExactScoreProfile(reviews)
++    expect(profile.missedPatterns).toHaveLength(0)
++  })
++
++  it('topMissedPattern is null when no patterns and low bias', () => {
++    const reviews = [makeReview(1, 1, 1, 1, 4)]
++    const profile = buildExactScoreProfile(reviews)
++    expect(profile.topMissedPattern).toBeNull()
++  })
++
++  it('topMissedPattern includes over-prediction bias text', () => {
++    const reviews = [
++      makeReview(3, 0, 1, 0, 1),
++      makeReview(3, 0, 1, 0, 1),
++      makeReview(3, 0, 1, 0, 1),
++    ]
++    const profile = buildExactScoreProfile(reviews)
++    expect(profile.homeGoalBias).toBe(2)
++    expect(profile.topMissedPattern).toContain('over-predicted')
++  })
++})
+diff --git a/worldcup-app/src/__tests__/failure-classifier.test.ts b/worldcup-app/src/__tests__/failure-classifier.test.ts
+new file mode 100644
+index 0000000..6283f9e
+--- /dev/null
++++ b/worldcup-app/src/__tests__/failure-classifier.test.ts
+@@ -0,0 +1,128 @@
++import { describe, it, expect } from 'vitest'
++import { classifyEngineFailure, buildBlindSpotProfile } from '@/lib/failure-classifier'
++import { makeAdj, QUAL_UNKNOWN, QUAL_MUST_WIN } from './test-factories'
++
++const BASE = {
++  homeAdj: undefined,
++  awayAdj: undefined,
++  homeQual: QUAL_UNKNOWN,
++  awayQual: QUAL_UNKNOWN,
++}
++
++describe('classifyEngineFailure', () => {
++  it('returns correct when exact score matches', () => {
++    expect(classifyEngineFailure({ ...BASE, recH: 2, recA: 1, actualH: 2, actualA: 1 })).toBe('correct')
++  })
++
++  it('returns correct with floating-point rec that rounds correctly', () => {
++    expect(classifyEngineFailure({ ...BASE, recH: 1.6, recA: 0.4, actualH: 2, actualA: 0 })).toBe('correct')
++  })
++
++  it('returns away_attack_underestimated when away scored 2+ more and attackFactor high', () => {
++    expect(classifyEngineFailure({
++      ...BASE,
++      recH: 2, recA: 0, actualH: 2, actualA: 3,
++      awayAdj: makeAdj('X', 1.20, 1.0),
++    })).toBe('away_attack_underestimated')
++  })
++
++  it('does NOT return away_attack_underestimated when shortfall < 2', () => {
++    expect(classifyEngineFailure({
++      ...BASE,
++      recH: 2, recA: 0, actualH: 2, actualA: 1,
++      awayAdj: makeAdj('X', 1.20, 1.0),
++    })).not.toBe('away_attack_underestimated')
++  })
++
++  it('returns home_attack_underestimated when home scored 2+ more and attackFactor high', () => {
++    expect(classifyEngineFailure({
++      ...BASE,
++      recH: 0, recA: 2, actualH: 3, actualA: 2,
++      homeAdj: makeAdj('Y', 1.15, 1.0),
++    })).toBe('home_attack_underestimated')
++  })
++
++  it('returns defensive_improvement_ignored when total goals lower by 2+ and good defence', () => {
++    expect(classifyEngineFailure({
++      ...BASE,
++      recH: 3, recA: 2, actualH: 1, actualA: 1,
++      homeAdj: makeAdj('Y', 1.0, 0.80),
++    })).toBe('defensive_improvement_ignored')
++  })
++
++  it('returns qualification_pressure_ignored for must-win home team that outperformed', () => {
++    expect(classifyEngineFailure({
++      ...BASE,
++      recH: 0, recA: 1, actualH: 2, actualA: 1,
++      homeQual: QUAL_MUST_WIN,
++    })).toBe('qualification_pressure_ignored')
++  })
++
++  it('returns qualification_pressure_ignored for must-win away team', () => {
++    expect(classifyEngineFailure({
++      ...BASE,
++      recH: 2, recA: 0, actualH: 1, actualA: 2,
++      awayQual: QUAL_MUST_WIN,
++    })).toBe('qualification_pressure_ignored')
++  })
++
++  it('returns favourite_overestimated when margin >= 2 and outcome differs', () => {
++    expect(classifyEngineFailure({ ...BASE, recH: 3, recA: 0, actualH: 1, actualA: 1 })).toBe('favourite_overestimated')
++  })
++
++  it('returns over_predicted_goals when same winner but total goals over-predicted by 1+', () => {
++    expect(classifyEngineFailure({ ...BASE, recH: 2, recA: 1, actualH: 1, actualA: 0 })).toBe('over_predicted_goals')
++  })
++
++  it('over_predicted_goals: fires when predicted 3-1 actual 2-0 (same winner, 2 less goals)', () => {
++    expect(classifyEngineFailure({ ...BASE, recH: 3, recA: 1, actualH: 2, actualA: 0 })).toBe('over_predicted_goals')
++  })
++
++  it('does NOT return over_predicted_goals when winner differs', () => {
++    expect(classifyEngineFailure({ ...BASE, recH: 2, recA: 1, actualH: 0, actualA: 1 })).not.toBe('over_predicted_goals')
++  })
++
++  it('returns random_variance as fallback when no pattern fits', () => {
++    expect(classifyEngineFailure({ ...BASE, recH: 1, recA: 1, actualH: 0, actualA: 1 })).toBe('random_variance')
++  })
++})
++
++describe('buildBlindSpotProfile', () => {
++  it('excludes correct predictions from profile', () => {
++    const entries = [
++      { category: 'correct' as const },
++      { category: 'random_variance' as const },
++    ]
++    const profile = buildBlindSpotProfile(entries)
++    expect(profile.find(p => p.category === 'correct')).toBeUndefined()
++    expect(profile).toHaveLength(1)
++  })
++
++  it('calculates percentages correctly', () => {
++    const entries = [
++      { category: 'random_variance' as const },
++      { category: 'random_variance' as const },
++      { category: 'over_predicted_goals' as const },
++    ]
++    const profile = buildBlindSpotProfile(entries)
++    const rv = profile.find(p => p.category === 'random_variance')!
++    expect(rv.count).toBe(2)
++    expect(rv.pct).toBe(67)
++  })
++
++  it('returns empty array for empty input', () => {
++    expect(buildBlindSpotProfile([])).toEqual([])
++  })
++
++  it('sorts by count descending', () => {
++    const entries = [
++      { category: 'over_predicted_goals' as const },
++      { category: 'random_variance' as const },
++      { category: 'random_variance' as const },
++      { category: 'random_variance' as const },
++    ]
++    const profile = buildBlindSpotProfile(entries)
++    expect(profile[0].category).toBe('random_variance')
++    expect(profile[1].category).toBe('over_predicted_goals')
++  })
++})
+diff --git a/worldcup-app/src/__tests__/golden-matches.test.ts b/worldcup-app/src/__tests__/golden-matches.test.ts
+new file mode 100644
+index 0000000..873fe05
+--- /dev/null
++++ b/worldcup-app/src/__tests__/golden-matches.test.ts
+@@ -0,0 +1,312 @@
++// Golden match tests — frozen expected outputs for representative World Cup 2026 fixtures.
++// These tests use realistic tournament data to verify the pipeline produces stable,
++// expected outputs. A failure here means behaviour changed unexpectedly.
++
++import { describe, it, expect } from 'vitest'
++import { buildRecommendation } from '@/lib/recommendation-engine'
++import { generateMatchReview, poolScore } from '@/lib/match-review'
++import { classifyEngineFailure } from '@/lib/failure-classifier'
++import { generateLearningSignals } from '@/lib/learning-signals'
++import { buildRecommendationInsight } from '@/lib/recommendation-insight'
++import { buildDecisionSupport } from '@/lib/decision-support'
++import { makeTeam, makeFixture, makeAllPreds, makeResult, makeLocked, makePoolRec, makeHumanPred, QUAL_UNKNOWN, QUAL_MUST_WIN, QUAL_ELIMINATED } from './test-factories'
++
++// ── Golden Match 1: Colombia vs Côte d'Ivoire ────────────────────────────────
++// Engine 2-0. User overrides to 1-1. Actual 1-1. Override succeeds.
++// Key regression: overrideReason from humanPred.comment, not locked.override_reason.
++
++describe("Golden: Colombia vs Côte d'Ivoire", () => {
++  const fix = makeFixture('col-civ', 'col', 'civ')
++  const col = makeTeam('col', 'COL', 1780, 'K')
++  const civ = makeTeam('civ', 'CIV', 1700, 'E')
++  const rec = buildRecommendation(makeAllPreds('col-civ', 2.1, 0.4))!
++
++  it('engine recommends 2-0 Colombia win with High confidence', () => {
++    expect(rec.scoreline).toEqual({ home: 2, away: 0 })
++    expect(rec.confidence).toBe('High')
++    expect(rec.agreement).toBe('full')
++  })
++
++  it('pool points: exact 2-0 for 2-0 result → 4pts', () => {
++    expect(poolScore(2, 0, 2, 0)).toBe(4)
++  })
++
++  it('pool points: 1-1 prediction for 1-1 result → 4pts (exact override)', () => {
++    expect(poolScore(1, 1, 1, 1)).toBe(4)
++  })
++
++  it('pool points: engine 2-0 vs actual 1-1 → 0pts (wrong outcome)', () => {
++    expect(poolScore(2, 0, 1, 1)).toBe(0)
++  })
++
++  it('full review: override to 1-1 succeeds when actual is 1-1', () => {
++    const review = generateMatchReview({
++      fixture: fix, home: col, away: civ,
++      locked: makeLocked('col-civ', 1, 1, true),
++      rec: makePoolRec('col-civ', 2, 0),
++      result: makeResult('col-civ', 1, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      humanPred: makeHumanPred('col-civ', 1, 1, 'CIV never easy'),
++    })
++    expect(review.myPts).toBe(4)
++    expect(review.enginePts).toBe(0)
++    expect(review.verdict).toBe('Override succeeded')
++    expect(review.deltaVsEngine).toBe(4)
++    expect(review.overrideReason).toBe('CIV never easy')
++    expect(review.overridden).toBe(true)
++    expect(review.homeCode).toBe('COL')
++    expect(review.awayCode).toBe('CIV')
++    expect(review.blindSpot).toBe('favourite_overestimated')
++  })
++
++  it('blind spot: engine 2-0 vs actual 1-1 → favourite_overestimated', () => {
++    expect(classifyEngineFailure({
++      recH: 2, recA: 0, actualH: 1, actualA: 1,
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })).toBe('favourite_overestimated')
++  })
++})
++
++// ── Golden Match 2: Germany vs Côte d'Ivoire ─────────────────────────────────
++// Engine 3-0 Germany. CIV must win. Actual 1-1. qualification_pressure_ignored.
++
++describe('Golden: Germany vs Côte d\'Ivoire (must-win CIV)', () => {
++  const fix = makeFixture('ger-civ', 'ger', 'civ')
++  const ger = makeTeam('ger', 'GER', 1980, 'E')
++  const civ = makeTeam('civ', 'CIV', 1700, 'E')
++  const rec = buildRecommendation(makeAllPreds('ger-civ', 3.1, 0.3))!
++
++  it('engine recommends 3-0 Germany win (xG 3.1/0.3 → mode 3-0)', () => {
++    expect(rec.scoreline).toEqual({ home: 3, away: 0 })
++    expect(rec.confidence).toBe('High')
++  })
++
++  it('blind spot: must-win CIV draws → qualification_pressure_ignored', () => {
++    expect(classifyEngineFailure({
++      recH: 3, recA: 0, actualH: 1, actualA: 1,
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_MUST_WIN,
++    })).toBe('qualification_pressure_ignored')
++  })
++
++  it('review: engine wrong, user accepted rec → Both missed', () => {
++    const review = generateMatchReview({
++      fixture: fix, home: ger, away: civ,
++      locked: makeLocked('ger-civ', 3, 0),
++      rec: makePoolRec('ger-civ', 3, 0),
++      result: makeResult('ger-civ', 1, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_MUST_WIN,
++    })
++    expect(review.myPts).toBe(0)
++    expect(review.enginePts).toBe(0)
++    expect(review.verdict).toBe('Both missed')
++    expect(review.blindSpot).toBe('qualification_pressure_ignored')
++    expect(review.evidence.some(e => e.includes('motivation elevated'))).toBe(true)
++  })
++
++  it('decision support: must-win away with home-win prediction → challenge', () => {
++    const support = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_MUST_WIN,
++      apiCtx: undefined, home: ger, away: civ,
++    })
++    expect(support.challengeFactors.some(f => f.includes('must win'))).toBe(true)
++    expect(['minor', 'significant']).toContain(support.challengeLevel)
++  })
++})
++
++// ── Golden Match 3: England vs Ghana (accurate high-score prediction) ─────────
++
++describe('Golden: England vs Ghana (high-score accurate prediction)', () => {
++  const fix = makeFixture('eng-gha', 'eng', 'gha', 2)
++  const eng = makeTeam('eng', 'ENG', 1970, 'L')
++  const gha = makeTeam('gha', 'GHA', 1610, 'L')
++  const rec = buildRecommendation(makeAllPreds('eng-gha', 3.1, 1.1))!
++
++  it('engine recommends 3-1 England win (xG 3.1/1.1 → mode 3-1)', () => {
++    expect(rec.scoreline).toEqual({ home: 3, away: 1 })
++  })
++
++  it('pool points: exact 3-1 for 3-1 result → 4pts', () => {
++    expect(poolScore(3, 1, 3, 1)).toBe(4)
++  })
++
++  it('review: exact match → correct blind spot, 4pts each', () => {
++    const review = generateMatchReview({
++      fixture: fix, home: eng, away: gha,
++      locked: makeLocked('eng-gha', 3, 1),
++      rec: makePoolRec('eng-gha', 3, 1),
++      result: makeResult('eng-gha', 3, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.myPts).toBe(4)
++    expect(review.enginePts).toBe(4)
++    expect(review.blindSpot).toBe('correct')
++    expect(review.verdict).toBe('Both matched')
++    expect(review.deltaVsEngine).toBe(0)
++  })
++})
++
++// ── Golden Match 4: Switzerland vs Canada (over-predicted goals) ─────────────
++// Engine 2-1. Actual 1-0. Same winner (+1 GD both) → 2pts, over_predicted_goals.
++
++describe('Golden: Switzerland vs Canada (over-predicted goals)', () => {
++  const fix = makeFixture('sui-can', 'sui', 'can', 2)
++  const sui = makeTeam('sui', 'SUI', 1840, 'B')
++  const can = makeTeam('can', 'CAN', 1720, 'B')
++  const rec = buildRecommendation(makeAllPreds('sui-can', 2.1, 1.1))!
++
++  it('engine recommends 2-1 Switzerland win (xG 2.1/1.1 → mode 2-1)', () => {
++    expect(rec.scoreline).toEqual({ home: 2, away: 1 })
++  })
++
++  it('pool points: 2-1 prediction for 1-0 actual → 2pts (same winner AND same GD=+1)', () => {
++    expect(poolScore(2, 1, 1, 0)).toBe(2)
++  })
++
++  it('blind spot: 2-1 vs 1-0 → over_predicted_goals (same winner, 2 fewer total)', () => {
++    expect(classifyEngineFailure({
++      recH: 2, recA: 1, actualH: 1, actualA: 0,
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })).toBe('over_predicted_goals')
++  })
++
++  it('review captures over_predicted_goals and correct lesson', () => {
++    const review = generateMatchReview({
++      fixture: fix, home: sui, away: can,
++      locked: makeLocked('sui-can', 2, 1),
++      rec: makePoolRec('sui-can', 2, 1),
++      result: makeResult('sui-can', 1, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.blindSpot).toBe('over_predicted_goals')
++    expect(review.myPts).toBe(2)  // same winner, same GD (+1)
++    expect(review.lesson).toContain('lower scorelines')
++  })
++})
++
++// ── Golden Match 5: Bosnia vs Qatar (elimination context) ──────────────────
++
++describe('Golden: Bosnia vs Qatar (eliminated team)', () => {
++  const fix = makeFixture('bih-qat', 'bih', 'qat', 3)
++  const bih = makeTeam('bih', 'BIH', 1640, 'B')
++  const qat = makeTeam('qat', 'QAT', 1550, 'B')
++  const rec = buildRecommendation(makeAllPreds('bih-qat', 3.1, 0.2))!
++
++  it('engine recommends 3-0 Bosnia win (xG 3.1/0.2 → mode 3-0)', () => {
++    expect(rec.scoreline).toEqual({ home: 3, away: 0 })
++  })
++
++  it('eliminated status adds challenge factor in decision support', () => {
++    const support = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_ELIMINATED,
++      apiCtx: undefined, home: bih, away: qat,
++    })
++    expect(support.challengeFactors.some(f => f.includes('eliminated'))).toBe(true)
++  })
++
++  it('blind spot: 3-0 vs 2-0 → over_predicted_goals', () => {
++    expect(classifyEngineFailure({
++      recH: 3, recA: 0, actualH: 2, actualA: 0,
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_ELIMINATED,
++    })).toBe('over_predicted_goals')
++  })
++
++  it('pool points: 3-0 for 2-0 → 1pt (winner correct, GD differs)', () => {
++    expect(poolScore(3, 0, 2, 0)).toBe(1)
++  })
++
++  it('review: evidence includes QAT eliminated bullet', () => {
++    const review = generateMatchReview({
++      fixture: fix, home: bih, away: qat,
++      locked: makeLocked('bih-qat', 3, 0),
++      rec: makePoolRec('bih-qat', 3, 0),
++      result: makeResult('bih-qat', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_ELIMINATED,
++    })
++    expect(review.evidence.some(e => e.includes('eliminated'))).toBe(true)
++    expect(review.blindSpot).toBe('over_predicted_goals')
++  })
++})
++
++// ── Cross-match: Learning signal accumulation ─────────────────────────────────
++
++describe('Golden: Learning signals from multiple over-predicted matches', () => {
++  it('6 over_predicted_goals failures (avg positive delta) → Strong signal, appliedToRecs', () => {
++    const reviews: import('@/lib/match-review').MatchReview[] = [
++      ...Array.from({ length: 5 }, (_, i) => ({
++        fixtureId: `f${i}`, homeCode: 'A', awayCode: 'B',
++        engineH: 2, engineA: 1, myH: 1, myA: 0, actualH: 1, actualA: 0,
++        myPts: 4, enginePts: 1, overridden: true, overrideReason: 'took lower' as string | null,
++        evidence: [], verdict: 'Override succeeded' as const,
++        lesson: '', blindSpot: 'over_predicted_goals' as const, deltaVsEngine: 3,
++      })),
++      {
++        fixtureId: 'f5', homeCode: 'C', awayCode: 'D',
++        engineH: 3, engineA: 0, myH: 3, myA: 0, actualH: 2, actualA: 0,
++        myPts: 1, enginePts: 1, overridden: false, overrideReason: null,
++        evidence: [], verdict: 'Both missed' as const,
++        lesson: '', blindSpot: 'over_predicted_goals' as const, deltaVsEngine: 0,
++      },
++    ]
++    const signals = generateLearningSignals(reviews)
++    const sig = signals.find(s => s.category === 'over_predicted_goals')!
++    expect(sig.occurrences).toBe(6)
++    expect(sig.confidence).toBe('High')
++    expect(sig.avgPtsImprovement).toBeGreaterThan(0.3)
++    expect(sig.strength).toBe('Strong')
++    expect(sig.appliedToRecs).toBe(true)
++  })
++
++  it('5 over_predicted_goals failures → Moderate signal (below Strong threshold)', () => {
++    const reviews = Array.from({ length: 5 }, (_, i) => ({
++      fixtureId: `f${i}`, homeCode: 'A', awayCode: 'B',
++      engineH: 2, engineA: 0, myH: 1, myA: 0, actualH: 1, actualA: 0,
++      myPts: 2, enginePts: 1, overridden: false, overrideReason: null,
++      evidence: [], verdict: 'Both missed' as const,
++      lesson: '', blindSpot: 'over_predicted_goals' as const, deltaVsEngine: 1,
++    }))
++    const signals = generateLearningSignals(reviews)
++    const sig = signals.find(s => s.category === 'over_predicted_goals')!
++    expect(sig.occurrences).toBe(5)
++    expect(sig.confidence).toBe('Medium')
++    expect(sig.strength).toBe('Moderate')
++    expect(sig.appliedToRecs).toBe(true)
++  })
++
++  it('RecommendationInsight with over_predicted_goals signal has appliedLearning', () => {
++    const rec = buildRecommendation(makeAllPreds('next-fix', 2.1, 0.8))!
++    const support = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: undefined, away: undefined,
++    })
++    const insight = buildRecommendationInsight({
++      fixtureId: 'next-fix', rec, support,
++      appliedLearning: [{
++        signalId: 'over_predicted_goals',
++        lesson: 'Engine consistently predicts more goals than materialise — trust lower scorelines',
++        strength: 'Strong',
++        source: 'blind_spot',
++        adjustmentDescription: 'Scoreline adjusted to lower total',
++        adjustmentMagnitude: 0.1,
++        confidence: 'High',
++      }],
++      now: '2026-06-20T10:00:00Z',
++    })
++    expect(insight.appliedLearning).toHaveLength(1)
++    expect(insight.appliedLearning[0].signalId).toBe('over_predicted_goals')
++  })
++})
+diff --git a/worldcup-app/src/__tests__/integration.test.ts b/worldcup-app/src/__tests__/integration.test.ts
+new file mode 100644
+index 0000000..11a4982
+--- /dev/null
++++ b/worldcup-app/src/__tests__/integration.test.ts
+@@ -0,0 +1,416 @@
++// End-to-end integration tests for the full recommendation pipeline.
++// Pipeline:
++//   SeedPredictions
++//     → buildRecommendation()        → Recommendation
++//     → buildTeamAdjustments()       → TeamAdjustment[]
++//     → buildDecisionSupport()       → DecisionSupport
++//     → generateMatchReview()        → MatchReview  (after result known)
++//     → generateLearningSignals()    → LearningSignal[]
++//     → buildRecommendationInsight() → RecommendationInsight
++
++import { describe, it, expect } from 'vitest'
++import { buildRecommendation } from '@/lib/recommendation-engine'
++import { buildTeamAdjustments } from '@/lib/learning-layer'
++import { buildDecisionSupport } from '@/lib/decision-support'
++import { generateMatchReview, generateAllReviews } from '@/lib/match-review'
++import { generateLearningSignals, getApplicableSignals } from '@/lib/learning-signals'
++import { buildRecommendationInsight, computeFreshness } from '@/lib/recommendation-insight'
++import { makeTeam, makeFixture, makeAllPreds, makeResult, makeLocked, makePoolRec, QUAL_UNKNOWN, QUAL_MUST_WIN, QUAL_ROTATION, QUAL_ELIMINATED } from './test-factories'
++
++// ── Shared test data ──────────────────────────────────────────────────────────
++
++const teamA = makeTeam('col', 'COL', 1780, 'K')
++const teamB = makeTeam('civ', 'CIV', 1700, 'E')
++const teamC = makeTeam('ger', 'GER', 1980, 'E')
++const allTeams = [teamA, teamB, teamC]
++
++const fix1 = makeFixture('col-civ', 'col', 'civ')
++const predictions = makeAllPreds('col-civ', 2.1, 0.4)
++
++// ── Stage 1: buildRecommendation ──────────────────────────────────────────────
++
++describe('Stage 1 — buildRecommendation', () => {
++  it('returns non-null recommendation from three models', () => {
++    expect(buildRecommendation(predictions)).not.toBeNull()
++  })
++
++  it('recommendation has correct shape', () => {
++    const rec = buildRecommendation(predictions)!
++    expect(rec).toMatchObject({
++      scoreline: expect.objectContaining({ home: expect.any(Number), away: expect.any(Number) }),
++      confidence: expect.stringMatching(/^(High|Medium|Low)$/),
++      agreement: expect.stringMatching(/^(full|majority|split)$/),
++      alternatives: expect.any(Array),
++      rationale: expect.any(Array),
++    })
++  })
++
++  it('three identical predictions produce full agreement and High confidence', () => {
++    const rec = buildRecommendation(predictions)!
++    expect(rec.agreement).toBe('full')
++    expect(rec.confidence).toBe('High')
++  })
++
++  it('mode scoreline is 2-0 when all xG inputs are 2.1-0.4', () => {
++    const rec = buildRecommendation(predictions)!
++    expect(rec.scoreline).toEqual({ home: 2, away: 0 })
++  })
++
++  it('returns null for empty predictions', () => {
++    expect(buildRecommendation([])).toBeNull()
++  })
++
++  it('split predictions produce Low or Medium confidence', () => {
++    const split = [
++      { ...predictions[0], home_goals: 2.1, away_goals: 0.4 },
++      { ...predictions[1], home_goals: 0.4, away_goals: 2.1 },
++      { ...predictions[2], home_goals: 0.9, away_goals: 0.9 },
++    ]
++    const rec = buildRecommendation(split)!
++    expect(rec.agreement).toBe('split')
++    expect(['Low', 'Medium']).toContain(rec.confidence)
++  })
++})
++
++// ── Stage 2: buildTeamAdjustments ────────────────────────────────────────────
++
++describe('Stage 2 — buildTeamAdjustments', () => {
++  const fixtures = [fix1]
++  const results = [makeResult('col-civ', 3, 0)]
++
++  it('produces adjustments for teams with results', () => {
++    const adjs = buildTeamAdjustments(allTeams, fixtures, results, predictions)
++    expect(adjs.length).toBeGreaterThan(0)
++  })
++
++  it('COL attackFactor > 1 when they scored more than expected', () => {
++    const adjs = buildTeamAdjustments(allTeams, fixtures, results, predictions)
++    const col = adjs.find(a => a.teamId === 'col')!
++    expect(col).toBeDefined()
++    expect(col.attackFactor).toBeGreaterThan(1)
++  })
++
++  it('CIV defenceFactor > 1 when they conceded more than expected', () => {
++    const adjs = buildTeamAdjustments(allTeams, fixtures, results, predictions)
++    const civ = adjs.find(a => a.teamId === 'civ')!
++    expect(civ.defenceFactor).toBeGreaterThan(1)
++  })
++
++  it('adjustment factors are clamped to [0.5, 2.0]', () => {
++    const adjs = buildTeamAdjustments(allTeams, fixtures, results, predictions)
++    for (const adj of adjs) {
++      expect(adj.attackFactor).toBeGreaterThanOrEqual(0.5)
++      expect(adj.attackFactor).toBeLessThanOrEqual(2.0)
++      expect(adj.defenceFactor).toBeGreaterThanOrEqual(0.5)
++      expect(adj.defenceFactor).toBeLessThanOrEqual(2.0)
++    }
++  })
++
++  it('confidence is Low after 1 match', () => {
++    const adjs = buildTeamAdjustments(allTeams, fixtures, results, predictions)
++    const col = adjs.find(a => a.teamId === 'col')!
++    expect(col.matchesPlayed).toBe(1)
++    expect(col.confidence).toBe('Low')
++  })
++
++  it('teams with no results are excluded', () => {
++    const adjs = buildTeamAdjustments(allTeams, fixtures, results, predictions)
++    expect(adjs.find(a => a.teamId === 'ger')).toBeUndefined()
++  })
++})
++
++// ── Stage 3: buildDecisionSupport ────────────────────────────────────────────
++
++describe('Stage 3 — buildDecisionSupport', () => {
++  const rec = buildRecommendation(predictions)!
++
++  it('produces DecisionSupport with expected shape', () => {
++    const support = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: teamA, away: teamB,
++    })
++    expect(support).toMatchObject({
++      engineConfidence: expect.stringMatching(/^(High|Medium|Low)$/),
++      contextConfidence: expect.any(String),
++      supportFactors: expect.any(Array),
++      challengeFactors: expect.any(Array),
++      challengeLevel: expect.stringMatching(/^(none|minor|significant)$/),
++    })
++  })
++
++  it('must_win home team with engine predicting home win → support factor added', () => {
++    const support = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_MUST_WIN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: teamA, away: teamB,
++    })
++    expect(support.supportFactors.some(f => f.includes('must win'))).toBe(true)
++  })
++
++  it('must_win away team with engine predicting home win → challenge factor added', () => {
++    const support = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_MUST_WIN,
++      apiCtx: undefined, home: teamA, away: teamB,
++    })
++    expect(support.challengeFactors.some(f => f.includes('must win'))).toBe(true)
++  })
++
++  it('rotation_risk steps down context confidence', () => {
++    const baseSupport = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: teamA, away: teamB,
++    })
++    const rotSupport = buildDecisionSupport({
++      rec, homeAdj: undefined, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_ROTATION, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: teamA, away: teamB,
++    })
++    const order = ['High', 'Medium-High', 'Medium', 'Medium-Low', 'Low']
++    expect(order.indexOf(rotSupport.contextConfidence)).toBeGreaterThan(
++      order.indexOf(baseSupport.contextConfidence)
++    )
++  })
++})
++
++// ── Stage 4: generateMatchReview ─────────────────────────────────────────────
++
++describe('Stage 4 — generateMatchReview (post-result)', () => {
++  const rec = buildRecommendation(predictions)!
++  const poolRec = makePoolRec('col-civ', rec.scoreline.home, rec.scoreline.away)
++
++  it('accepted rec exact match: 4pts, Both matched, no override', () => {
++    const review = generateMatchReview({
++      fixture: fix1, home: teamA, away: teamB,
++      locked: makeLocked('col-civ', 2, 0),
++      rec: poolRec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.myPts).toBe(4)
++    expect(review.enginePts).toBe(4)
++    expect(review.verdict).toBe('Both matched')
++    expect(review.overridden).toBe(false)
++    expect(review.deltaVsEngine).toBe(0)
++    expect(review.blindSpot).toBe('correct')
++  })
++
++  it('override that succeeded: user 1-1, engine 2-0, actual 1-1', () => {
++    const review = generateMatchReview({
++      fixture: fix1, home: teamA, away: teamB,
++      locked: makeLocked('col-civ', 1, 1, true, 'CIV strong'),
++      rec: poolRec, result: makeResult('col-civ', 1, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.verdict).toBe('Override succeeded')
++    expect(review.myPts).toBe(4)
++    expect(review.enginePts).toBe(0)
++    expect(review.deltaVsEngine).toBe(4)
++    expect(review.overrideReason).toBe('CIV strong')
++  })
++
++  it('override that failed: user 1-1, engine 2-0, actual 2-0', () => {
++    const review = generateMatchReview({
++      fixture: fix1, home: teamA, away: teamB,
++      locked: makeLocked('col-civ', 1, 1, true),
++      rec: poolRec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.verdict).toBe('Override failed')
++    expect(review.deltaVsEngine).toBe(-4)
++  })
++
++  it('over_predicted_goals: engine 2-0, actual 1-0', () => {
++    const review = generateMatchReview({
++      fixture: fix1, home: teamA, away: teamB,
++      locked: makeLocked('col-civ', 2, 0),
++      rec: poolRec, result: makeResult('col-civ', 1, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.blindSpot).toBe('over_predicted_goals')
++    expect(review.myPts).toBe(1)
++  })
++})
++
++// ── Stage 5: generateLearningSignals ─────────────────────────────────────────
++
++describe('Stage 5 — generateLearningSignals from pipeline reviews', () => {
++  it('pipeline: reviews → signals → applicable signals chain works end-to-end', () => {
++    const opg = Array.from({ length: 6 }, (_, i) => ({
++      fixtureId: `f${i}`, homeCode: 'A', awayCode: 'B',
++      engineH: 2, engineA: 0, myH: 1, myA: 0,
++      actualH: 1, actualA: 0, myPts: 2, enginePts: 1,
++      overridden: true, overrideReason: 'Took lower score',
++      evidence: [], verdict: 'Override succeeded' as const,
++      lesson: '', blindSpot: 'over_predicted_goals' as const,
++      deltaVsEngine: 1,
++    }))
++    const rv = {
++      fixtureId: 'f99', homeCode: 'X', awayCode: 'Y',
++      engineH: 1, engineA: 1, myH: 1, myA: 1,
++      actualH: 0, actualA: 2, myPts: 0, enginePts: 0,
++      overridden: false, overrideReason: null,
++      evidence: [], verdict: 'Both missed' as const,
++      lesson: '', blindSpot: 'random_variance' as const,
++      deltaVsEngine: 0,
++    }
++
++    const all = generateLearningSignals([...opg, rv])
++    const applicable = getApplicableSignals(all)
++
++    expect(all.find(s => s.category === 'random_variance')?.appliedToRecs).toBe(false)
++    expect(applicable.every(s => s.category !== 'random_variance')).toBe(true)
++    expect(applicable.some(s => s.category === 'over_predicted_goals')).toBe(true)
++  })
++})
++
++// ── Stage 6: buildRecommendationInsight ──────────────────────────────────────
++
++describe('Stage 6 — buildRecommendationInsight from pipeline outputs', () => {
++  const rec = buildRecommendation(predictions)!
++  const support = buildDecisionSupport({
++    rec, homeAdj: undefined, awayAdj: undefined,
++    homeStanding: undefined, awayStanding: undefined,
++    homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    apiCtx: undefined, home: teamA, away: teamB,
++  })
++
++  it('insight has all expected fields populated', () => {
++    const insight = buildRecommendationInsight({
++      fixtureId: 'col-civ', rec, support, now: '2026-06-15T08:00:00Z',
++    })
++    expect(insight.fixtureId).toBe('col-civ')
++    expect(insight.scoreline).toEqual({ home: 2, away: 0 })
++    expect(insight.confidence).toBe('High')
++    expect(insight.freshness.status).toBe('Fresh')
++    expect(typeof insight.summary).toBe('string')
++  })
++
++  it('freshness transitions: Fresh → Refreshing → Stale', () => {
++    const gen = '2026-06-15T08:00:00Z'
++    expect(computeFreshness(gen, '2026-06-15T08:20:00Z')).toBe('Fresh')
++    expect(computeFreshness(gen, '2026-06-15T10:00:00Z')).toBe('Refreshing')
++    expect(computeFreshness(gen, '2026-06-15T16:00:00Z')).toBe('Stale')
++  })
++})
++
++// ── Full chain: Fixture → Insight ─────────────────────────────────────────────
++
++describe('Full pipeline chain test', () => {
++  it('runs all 6 stages in sequence and verifies chain correctness', () => {
++    const rec = buildRecommendation(predictions)
++    expect(rec).not.toBeNull()
++
++    const fixtures = [fix1]
++    const results = [makeResult('col-civ', 3, 0)]
++    const adjs = buildTeamAdjustments(allTeams, fixtures, results, predictions)
++    const colAdj = adjs.find(a => a.teamId === 'col')
++    expect(colAdj!.attackFactor).toBeGreaterThan(1)
++
++    const support = buildDecisionSupport({
++      rec: rec!, homeAdj: colAdj, awayAdj: undefined,
++      homeStanding: undefined, awayStanding: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      apiCtx: undefined, home: teamA, away: teamB,
++    })
++    expect(support.engineConfidence).toBe(rec!.confidence)
++
++    const review = generateMatchReview({
++      fixture: fix1, home: teamA, away: teamB,
++      locked: makeLocked('col-civ', rec!.scoreline.home, rec!.scoreline.away),
++      rec: makePoolRec('col-civ', rec!.scoreline.home, rec!.scoreline.away),
++      result: makeResult('col-civ', 3, 0),
++      homeAdj: colAdj, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.myPts).toBe(1)  // 2-0 vs 3-0: winner correct, GD differs
++
++    const moreReviews = Array.from({ length: 5 }, (_, i) => ({
++      ...review, fixtureId: `f${i}`,
++      blindSpot: 'home_attack_underestimated' as const,
++      deltaVsEngine: 1, myPts: 2, enginePts: 1,
++    }))
++    const signals = generateLearningSignals(moreReviews)
++    expect(signals.length).toBeGreaterThan(0)
++
++    const applicable = getApplicableSignals(signals)
++    const insight = buildRecommendationInsight({
++      fixtureId: 'col-civ', rec: rec!, support,
++      appliedLearning: applicable.map(s => ({
++        signalId: s.id, lesson: s.lesson,
++        strength: s.strength as 'Strong' | 'Moderate',
++        source: 'tournament_form' as const,
++        adjustmentDescription: `Adjustment`,
++        adjustmentMagnitude: 0.1,
++        confidence: s.confidence as 'High' | 'Medium',
++      })),
++      now: '2026-06-15T08:00:00Z',
++    })
++    expect(insight.fixtureId).toBe('col-civ')
++    expect(insight.freshness.status).toBe('Fresh')
++  })
++})
++
++// ── generateAllReviews integration ────────────────────────────────────────────
++
++describe('generateAllReviews integration', () => {
++  const fixtures = [
++    fix1,
++    makeFixture('col-ger', 'col', 'ger', 2),
++  ]
++  const results = [
++    makeResult('col-civ', 2, 0),
++    makeResult('col-ger', 1, 2),
++  ]
++  const locked = [
++    makeLocked('col-civ', 2, 0),
++    makeLocked('col-ger', 2, 1, true, 'GER strong away'),
++  ]
++  const recs = [
++    makePoolRec('col-civ', 2, 0),
++    makePoolRec('col-ger', 1, 1),
++  ]
++
++  it('generates correct number of reviews', () => {
++    const reviews = generateAllReviews({
++      fixtures, teams: allTeams,
++      lockedPredictions: locked,
++      poolRecommendations: recs,
++      results, adjustments: [], qualMap: {},
++    })
++    expect(reviews).toHaveLength(2)
++  })
++
++  it('each review has correct fixtureId', () => {
++    const reviews = generateAllReviews({
++      fixtures, teams: allTeams,
++      lockedPredictions: locked,
++      poolRecommendations: recs,
++      results, adjustments: [], qualMap: {},
++    })
++    const ids = reviews.map(r => r.fixtureId).sort()
++    expect(ids).toEqual(['col-civ', 'col-ger'].sort())
++  })
++
++  it('override reason is preserved in review', () => {
++    const reviews = generateAllReviews({
++      fixtures, teams: allTeams,
++      lockedPredictions: locked,
++      poolRecommendations: recs,
++      results, adjustments: [], qualMap: {},
++    })
++    const colGer = reviews.find(r => r.fixtureId === 'col-ger')!
++    expect(colGer.overridden).toBe(true)
++    expect(colGer.overrideReason).toBe('GER strong away')
++  })
++})
+diff --git a/worldcup-app/src/__tests__/learning-signals.test.ts b/worldcup-app/src/__tests__/learning-signals.test.ts
+new file mode 100644
+index 0000000..423af8f
+--- /dev/null
++++ b/worldcup-app/src/__tests__/learning-signals.test.ts
+@@ -0,0 +1,134 @@
++import { describe, it, expect } from 'vitest'
++import { generateLearningSignals, getApplicableSignals } from '@/lib/learning-signals'
++import type { MatchReview } from '@/lib/match-review'
++
++function makeReview(overrides: Partial<MatchReview>): MatchReview {
++  return {
++    fixtureId: 'f1',
++    homeCode: 'A',
++    awayCode: 'B',
++    engineH: 2,
++    engineA: 0,
++    myH: 2,
++    myA: 0,
++    actualH: 0,
++    actualA: 2,
++    myPts: 0,
++    enginePts: 0,
++    overridden: false,
++    overrideReason: null,
++    evidence: [],
++    verdict: 'Both missed',
++    lesson: '',
++    blindSpot: 'random_variance',
++    deltaVsEngine: 0,
++    ...overrides,
++  }
++}
++
++function makeReviews(
++  blindSpot: MatchReview['blindSpot'],
++  count: number,
++  delta = 1,
++): MatchReview[] {
++  return Array.from({ length: count }, (_, i) =>
++    makeReview({ fixtureId: `f${i}`, blindSpot, deltaVsEngine: delta, enginePts: 0, myPts: delta }),
++  )
++}
++
++describe('generateLearningSignals', () => {
++  it('returns empty array for no reviews', () => {
++    expect(generateLearningSignals([])).toEqual([])
++  })
++
++  it('excludes reviews where enginePts is null', () => {
++    const reviews = [makeReview({ enginePts: null, blindSpot: 'favourite_overestimated' })]
++    expect(generateLearningSignals(reviews)).toHaveLength(0)
++  })
++
++  it('excludes correct predictions', () => {
++    const reviews = makeReviews('correct', 10)
++    expect(generateLearningSignals(reviews)).toHaveLength(0)
++  })
++
++  it('groups by blind spot category', () => {
++    const reviews = [
++      ...makeReviews('random_variance', 3),
++      ...makeReviews('over_predicted_goals', 4),
++    ]
++    const signals = generateLearningSignals(reviews)
++    expect(signals).toHaveLength(2)
++  })
++
++  it('computes correct occurrence count', () => {
++    const reviews = makeReviews('away_attack_underestimated', 5, 1)
++    const signals = generateLearningSignals(reviews)
++    expect(signals[0].occurrences).toBe(5)
++  })
++
++  it('computes avgPtsImprovement correctly', () => {
++    const reviews = [
++      makeReview({ blindSpot: 'over_predicted_goals', deltaVsEngine: 2, enginePts: 0, myPts: 2 }),
++      makeReview({ fixtureId: 'f2', blindSpot: 'over_predicted_goals', deltaVsEngine: 0, enginePts: 1, myPts: 1 }),
++    ]
++    const signals = generateLearningSignals(reviews)
++    expect(signals[0].avgPtsImprovement).toBe(1)
++  })
++
++  it('Strong signal: occurrences >= 5, High confidence, avgPts > 0.3', () => {
++    const reviews = makeReviews('away_attack_underestimated', 6, 1)
++    const signals = generateLearningSignals(reviews)
++    expect(signals[0].strength).toBe('Strong')
++    expect(signals[0].confidence).toBe('High')
++  })
++
++  it('Moderate signal: occurrences >= 3, non-Low confidence, avgPts > 0.1', () => {
++    const reviews = makeReviews('home_attack_underestimated', 3, 0.5)
++    const signals = generateLearningSignals(reviews)
++    expect(signals[0].strength).toBe('Moderate')
++  })
++
++  it('Weak signal: occurrences < 3', () => {
++    const reviews = makeReviews('favourite_overestimated', 2, 2)
++    const signals = generateLearningSignals(reviews)
++    expect(signals[0].strength).toBe('Weak')
++  })
++
++  it('random_variance is never appliedToRecs (regression: bug fix 3)', () => {
++    const reviews = makeReviews('random_variance', 10, 2)
++    const signals = generateLearningSignals(reviews)
++    const rv = signals.find(s => s.category === 'random_variance')!
++    expect(rv.appliedToRecs).toBe(false)
++  })
++
++  it('negative avgPtsImprovement means appliedToRecs = false', () => {
++    const reviews = makeReviews('over_predicted_goals', 6, -1)
++    const signals = generateLearningSignals(reviews)
++    expect(signals[0].appliedToRecs).toBe(false)
++  })
++
++  it('sorts Strong before Moderate before Weak', () => {
++    const reviews = [
++      ...makeReviews('away_attack_underestimated', 6, 1),   // Strong
++      ...makeReviews('home_attack_underestimated', 3, 0.5), // Moderate
++      ...makeReviews('favourite_overestimated', 1, 2),      // Weak
++    ]
++    const signals = generateLearningSignals(reviews)
++    expect(signals[0].strength).toBe('Strong')
++    expect(signals[1].strength).toBe('Moderate')
++    expect(signals[2].strength).toBe('Weak')
++  })
++})
++
++describe('getApplicableSignals', () => {
++  it('returns only Strong and Moderate signals that are appliedToRecs', () => {
++    const reviews = [
++      ...makeReviews('away_attack_underestimated', 6, 1),
++      ...makeReviews('favourite_overestimated', 1, 2),
++    ]
++    const all = generateLearningSignals(reviews)
++    const applicable = getApplicableSignals(all)
++    expect(applicable.every(s => s.appliedToRecs)).toBe(true)
++    expect(applicable.some(s => s.strength === 'Weak')).toBe(false)
++  })
++})
+diff --git a/worldcup-app/src/__tests__/match-review.test.ts b/worldcup-app/src/__tests__/match-review.test.ts
+new file mode 100644
+index 0000000..32bfac2
+--- /dev/null
++++ b/worldcup-app/src/__tests__/match-review.test.ts
+@@ -0,0 +1,254 @@
++import { describe, it, expect } from 'vitest'
++import { poolScore, generateMatchReview, generateAllReviews } from '@/lib/match-review'
++import { makeTeam, makeFixture, makeResult, makeLocked, makePoolRec, makeHumanPred, QUAL_UNKNOWN, QUAL_MUST_WIN, QUAL_ROTATION } from './test-factories'
++
++const fix = makeFixture('col-civ', 'col', 'civ')
++const home = makeTeam('col', 'COL', 1780, 'K')
++const away = makeTeam('civ', 'CIV', 1700, 'E')
++const rec = makePoolRec('col-civ', 2, 0)
++
++// ── poolScore ─────────────────────────────────────────────────────────────────
++
++describe('poolScore', () => {
++  it('returns 4 for exact score', () => {
++    expect(poolScore(2, 1, 2, 1)).toBe(4)
++  })
++
++  it('returns 4 when float prediction rounds to exact', () => {
++    expect(poolScore(1.6, 0.4, 2, 0)).toBe(4)
++  })
++
++  it('returns 2 for correct winner and correct goal difference', () => {
++    expect(poolScore(3, 1, 2, 0)).toBe(2)  // both home by 2
++  })
++
++  it('returns 1 for correct winner only', () => {
++    expect(poolScore(1, 0, 3, 1)).toBe(1)  // home wins, GD differs (pred 1 vs actual 2)
++  })
++
++  it('returns 0 for completely wrong prediction', () => {
++    expect(poolScore(2, 0, 0, 2)).toBe(0)
++  })
++
++  it('returns 2 for correct draw prediction — GD is 0 in both cases', () => {
++    expect(poolScore(1, 1, 2, 2)).toBe(2)
++  })
++
++  it('returns 2 for draw with exact GD (both 0)', () => {
++    expect(poolScore(0, 0, 1, 1)).toBe(2)  // GD = 0 in both cases
++  })
++})
++
++// ── generateMatchReview ───────────────────────────────────────────────────────
++
++describe('generateMatchReview', () => {
++  it('accepted rec: exact match gives 4pts, Both matched verdict', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 2, 0),
++      rec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.myPts).toBe(4)
++    expect(review.enginePts).toBe(4)
++    expect(review.verdict).toBe('Both matched')
++    expect(review.overridden).toBe(false)
++  })
++
++  it('accepted rec: engine and user both miss → Both missed', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 2, 0),
++      rec, result: makeResult('col-civ', 0, 2),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.verdict).toBe('Both missed')
++    expect(review.myPts).toBe(0)
++    expect(review.enginePts).toBe(0)
++  })
++
++  it('successful override: user beats engine', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 1, 1, true, 'CIV strong'),
++      rec, result: makeResult('col-civ', 1, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.overridden).toBe(true)
++    expect(review.myPts).toBe(4)
++    expect(review.enginePts).toBe(0)
++    expect(review.verdict).toBe('Override succeeded')
++    expect(review.deltaVsEngine).toBe(4)
++  })
++
++  it('failed override: engine beats user', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 1, 1, true),
++      rec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.verdict).toBe('Override failed')
++    expect(review.myPts).toBe(0)
++    expect(review.enginePts).toBe(4)
++    expect(review.deltaVsEngine).toBe(-4)
++  })
++
++  it('no rec: verdict is No rec available, enginePts null', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 2, 0),
++      rec: undefined, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.verdict).toBe('No rec available')
++    expect(review.enginePts).toBeNull()
++    expect(review.deltaVsEngine).toBeNull()
++  })
++
++  it('override reason falls back to humanPred.comment when locked has none', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 1, 1, true),  // no overrideReason
++      rec, result: makeResult('col-civ', 1, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      humanPred: makeHumanPred('col-civ', 1, 1, 'Key player injured'),
++    })
++    expect(review.overrideReason).toBe('Key player injured')
++  })
++
++  it('override reason from locked takes precedence over humanPred.comment', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 1, 1, true, 'Both teams look tired'),
++      rec, result: makeResult('col-civ', 1, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      humanPred: makeHumanPred('col-civ', 1, 1, 'different reason'),
++    })
++    expect(review.overrideReason).toBe('Both teams look tired')
++  })
++
++  it('returns null overrideReason when engine pick and no humanPred', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 2, 0),
++      rec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.overrideReason).toBeNull()
++  })
++
++  it('includes homeCode and awayCode from team codes', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 2, 0),
++      rec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.homeCode).toBe('COL')
++    expect(review.awayCode).toBe('CIV')
++  })
++
++  it('falls back to uppercased team_id when team not found', () => {
++    const review = generateMatchReview({
++      fixture: fix, home: undefined, away: undefined,
++      locked: makeLocked('col-civ', 2, 0),
++      rec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.homeCode).toBe('COL')
++    expect(review.awayCode).toBe('CIV')
++  })
++
++  it('evidence includes must_win motivation bullet', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 2, 0),
++      rec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_MUST_WIN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.evidence.some(e => e.includes('motivation elevated'))).toBe(true)
++  })
++
++  it('evidence includes rotation risk bullet', () => {
++    const review = generateMatchReview({
++      fixture: fix, home, away,
++      locked: makeLocked('col-civ', 2, 0),
++      rec, result: makeResult('col-civ', 2, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_ROTATION, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.evidence.some(e => e.includes('rotation likely'))).toBe(true)
++  })
++})
++
++// ── generateAllReviews ────────────────────────────────────────────────────────
++
++describe('generateAllReviews', () => {
++  const fixtures = [fix]
++  const teams = [home, away]
++  const results = [makeResult('col-civ', 2, 0)]
++  const locked = [makeLocked('col-civ', 2, 0)]
++  const recs = [rec]
++
++  it('generates one review for completed fixtures with locked prediction', () => {
++    const reviews = generateAllReviews({
++      fixtures, teams,
++      lockedPredictions: locked,
++      poolRecommendations: recs,
++      results,
++      adjustments: [],
++      qualMap: {},
++    })
++    expect(reviews).toHaveLength(1)
++    expect(reviews[0].fixtureId).toBe('col-civ')
++  })
++
++  it('skips fixtures without a result', () => {
++    const reviews = generateAllReviews({
++      fixtures, teams,
++      lockedPredictions: locked,
++      poolRecommendations: recs,
++      results: [],
++      adjustments: [],
++      qualMap: {},
++    })
++    expect(reviews).toHaveLength(0)
++  })
++
++  it('skips fixtures without a locked prediction', () => {
++    const reviews = generateAllReviews({
++      fixtures, teams,
++      lockedPredictions: [],
++      poolRecommendations: recs,
++      results,
++      adjustments: [],
++      qualMap: {},
++    })
++    expect(reviews).toHaveLength(0)
++  })
++
++  it('passes humanPredictions override reason through', () => {
++    const reviews = generateAllReviews({
++      fixtures, teams,
++      lockedPredictions: [makeLocked('col-civ', 1, 1, true)],
++      poolRecommendations: recs,
++      results,
++      adjustments: [],
++      qualMap: {},
++      humanPredictions: [makeHumanPred('col-civ', 1, 1, 'Gut feeling')],
++    })
++    expect(reviews[0].overrideReason).toBe('Gut feeling')
++  })
++})
+diff --git a/worldcup-app/src/__tests__/recommendation-insight.test.ts b/worldcup-app/src/__tests__/recommendation-insight.test.ts
+new file mode 100644
+index 0000000..86ae9c4
+--- /dev/null
++++ b/worldcup-app/src/__tests__/recommendation-insight.test.ts
+@@ -0,0 +1,176 @@
++import { describe, it, expect } from 'vitest'
++import { buildRecommendationInsight, computeFreshness } from '@/lib/recommendation-insight'
++import type { BuildInsightParams } from '@/lib/recommendation-insight'
++
++const rec = {
++  scoreline: { home: 2, away: 0 },
++  confidence: 'High' as const,
++}
++
++const support = {
++  confidenceReasons: ['Home team on 3-match winning run'],
++  supportFactors: ['Strong home record'],
++  challengeFactors: [],
++  challengeLevel: 'none' as const,
++  netEffect: 'Home advantage confirmed by recent form.',
++}
++
++const baseParams: BuildInsightParams = {
++  fixtureId: 'fix1',
++  rec: rec as any,
++  support: support as any,
++  now: '2026-06-15T10:00:00Z',
++}
++
++describe('computeFreshness', () => {
++  it('Fresh when age < 30 min', () => {
++    const gen = '2026-06-15T10:00:00Z'
++    const now = '2026-06-15T10:15:00Z'
++    expect(computeFreshness(gen, now)).toBe('Fresh')
++  })
++
++  it('Refreshing when 30 min <= age < 6 h', () => {
++    const gen = '2026-06-15T10:00:00Z'
++    const now = '2026-06-15T13:00:00Z'
++    expect(computeFreshness(gen, now)).toBe('Refreshing')
++  })
++
++  it('Stale when age >= 6 h', () => {
++    const gen = '2026-06-15T00:00:00Z'
++    const now = '2026-06-15T10:00:00Z'
++    expect(computeFreshness(gen, now)).toBe('Stale')
++  })
++})
++
++describe('buildRecommendationInsight', () => {
++  it('maps basic fields correctly', () => {
++    const insight = buildRecommendationInsight(baseParams)
++    expect(insight.fixtureId).toBe('fix1')
++    expect(insight.scoreline).toEqual({ home: 2, away: 0 })
++    expect(insight.confidence).toBe('High')
++    expect(insight.snapshotVersion).toBe(1)
++  })
++
++  it('freshness is Fresh when generatedAt matches now', () => {
++    const insight = buildRecommendationInsight(baseParams)
++    expect(insight.freshness.status).toBe('Fresh')
++    expect(insight.freshness.generatedAt).toBe('2026-06-15T10:00:00Z')
++  })
++
++  it('uses netEffect as summary when no overriding signals', () => {
++    const insight = buildRecommendationInsight(baseParams)
++    expect(insight.summary).toBe('Home advantage confirmed by recent form.')
++  })
++
++  it('summary prioritises significant challenge factor', () => {
++    const challengeSupport = {
++      ...support,
++      challengeLevel: 'significant' as const,
++      challengeFactors: ['Key striker suspended for this match'],
++    }
++    const insight = buildRecommendationInsight({ ...baseParams, support: challengeSupport as any })
++    expect(insight.summary).toContain('Context challenges this pick')
++  })
++
++  it('summary uses strong learning signal when present with support', () => {
++    const insight = buildRecommendationInsight({
++      ...baseParams,
++      appliedLearning: [{
++        signalId: 'away_attack_underestimated',
++        lesson: 'Away attacks are consistently underestimated.',
++        strength: 'Strong',
++        source: 'tournament_form',
++        adjustmentDescription: 'Away xG increased by 15%',
++        adjustmentMagnitude: 0.15,
++        confidence: 'High',
++      }],
++    })
++    expect(insight.summary).toContain('away attacks are consistently underestimated')
++  })
++
++  it('netXgAdjustment accumulates away signal magnitudes', () => {
++    const insight = buildRecommendationInsight({
++      ...baseParams,
++      appliedLearning: [
++        {
++          signalId: 'away_attack_underestimated',
++          lesson: '',
++          strength: 'Strong',
++          source: 'tournament_form',
++          adjustmentDescription: '',
++          adjustmentMagnitude: 0.12,
++          confidence: 'High',
++        },
++      ],
++    })
++    expect(insight.netXgAdjustment.away).toBeCloseTo(0.12)
++    expect(insight.netXgAdjustment.home).toBe(0)
++  })
++
++  it('netXgAdjustment accumulates home signal magnitudes', () => {
++    const insight = buildRecommendationInsight({
++      ...baseParams,
++      appliedLearning: [
++        {
++          signalId: 'home_attack_underestimated',
++          lesson: '',
++          strength: 'Strong',
++          source: 'tournament_form',
++          adjustmentDescription: '',
++          adjustmentMagnitude: 0.10,
++          confidence: 'High',
++        },
++      ],
++    })
++    expect(insight.netXgAdjustment.home).toBeCloseTo(0.10)
++  })
++
++  it('multiple learning signals accumulate correctly', () => {
++    const insight = buildRecommendationInsight({
++      ...baseParams,
++      appliedLearning: [
++        { signalId: 'away_attack_underestimated', lesson: '', strength: 'Strong', source: 'tournament_form', adjustmentDescription: '', adjustmentMagnitude: 0.12, confidence: 'High' },
++        { signalId: 'away_something_else', lesson: '', strength: 'Moderate', source: 'tournament_form', adjustmentDescription: '', adjustmentMagnitude: 0.08, confidence: 'Medium' },
++      ],
++    })
++    expect(insight.netXgAdjustment.away).toBeCloseTo(0.2)
++  })
++
++  it('passes through priorChangelog', () => {
++    const changelog = [{
++      timestamp: '2026-06-14T10:00:00Z',
++      event: 'created' as const,
++      description: 'Initial recommendation',
++      driver: 'Engine v1',
++    }]
++    const insight = buildRecommendationInsight({ ...baseParams, priorChangelog: changelog })
++    expect(insight.changelog).toHaveLength(1)
++  })
++
++  it('recommendationNotes populated from netEffect', () => {
++    const insight = buildRecommendationInsight(baseParams)
++    expect(insight.recommendationNotes).toContain('Home advantage confirmed by recent form.')
++  })
++
++  it('recommendationNotes empty when no netEffect', () => {
++    const noEffect = { ...support, netEffect: undefined }
++    const insight = buildRecommendationInsight({ ...baseParams, support: noEffect as any })
++    expect(insight.recommendationNotes).toHaveLength(0)
++  })
++
++  it('apiContext passed through', () => {
++    const apiContext = { homeAbsences: 2, awayAbsences: 0, lineupConfirmed: true, notes: ['GK out'] }
++    const insight = buildRecommendationInsight({ ...baseParams, apiContext })
++    expect(insight.apiContext?.homeAbsences).toBe(2)
++    expect(insight.apiContext?.lineupConfirmed).toBe(true)
++  })
++
++  it('summary: lineup confirmed with no challenge', () => {
++    const insight = buildRecommendationInsight({
++      ...baseParams,
++      support: { ...support, netEffect: undefined } as any,
++      apiContext: { homeAbsences: 0, awayAbsences: 0, lineupConfirmed: true, notes: [] },
++    })
++    expect(insight.summary).toContain('Lineup confirmed')
++  })
++})
+diff --git a/worldcup-app/src/__tests__/regression.test.ts b/worldcup-app/src/__tests__/regression.test.ts
+new file mode 100644
+index 0000000..d86d698
+--- /dev/null
++++ b/worldcup-app/src/__tests__/regression.test.ts
+@@ -0,0 +1,114 @@
++// Regression tests for bugs that must never reappear.
++// Each test is paired with a comment pointing to the original bug.
++
++import { describe, it, expect } from 'vitest'
++import { poolScore, generateMatchReview } from '@/lib/match-review'
++import { classifyEngineFailure } from '@/lib/failure-classifier'
++import { generateLearningSignals } from '@/lib/learning-signals'
++import { makeTeam, makeFixture, makeResult, makeLocked, makePoolRec, makeHumanPred, QUAL_UNKNOWN, QUAL_MUST_WIN } from './test-factories'
++
++// ── Bug: float comparison in poolScore (Phase A2) ─────────────────────────────
++
++describe('poolScore float rounding (regression)', () => {
++  it('scores 4 when fractional rec rounds to exact result', () => {
++    expect(poolScore(1.6, 0.4, 2, 0)).toBe(4)
++    expect(poolScore(2.49, 0.51, 2, 1)).toBe(4)
++  })
++
++  it('scores correct GD when rounded values share goal difference', () => {
++    expect(poolScore(1.6, 0.6, 2, 0)).toBe(1)
++  })
++})
++
++// ── Bug: overrideReason always null (Phase A2, bug fix 1) ────────────────────
++
++describe('overrideReason fallback to humanPred.comment (regression)', () => {
++  const fixture = makeFixture('col-civ', 'col', 'civ')
++
++  it('overrideReason is populated from humanPred.comment when locked has no reason', () => {
++    const review = generateMatchReview({
++      fixture, home: undefined, away: undefined,
++      locked: makeLocked('col-civ', 1, 1, true),  // custom, no override_reason
++      rec: makePoolRec('col-civ', 2, 0),
++      result: makeResult('col-civ', 1, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++      humanPred: makeHumanPred('col-civ', 1, 1, 'COL/CIV both fatigued from previous match'),
++    })
++    expect(review.overrideReason).toBe('COL/CIV both fatigued from previous match')
++  })
++
++  it('overrideReason is null when no source provides a reason', () => {
++    const review = generateMatchReview({
++      fixture, home: undefined, away: undefined,
++      locked: makeLocked('col-civ', 1, 1, true),
++      rec: makePoolRec('col-civ', 2, 0),
++      result: makeResult('col-civ', 1, 1),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.overrideReason).toBeNull()
++  })
++})
++
++// ── Bug: all engine failures classified as random_variance (Phase A2, bug fix 2) ──
++
++describe('over_predicted_goals classification (regression)', () => {
++  it('classifies same-winner, fewer-actual-goals as over_predicted_goals', () => {
++    expect(classifyEngineFailure({
++      recH: 2, recA: 1, actualH: 1, actualA: 0,
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })).toBe('over_predicted_goals')
++  })
++
++  it('does not fall to random_variance when over-prediction pattern fits', () => {
++    const result = classifyEngineFailure({
++      recH: 3, recA: 1, actualH: 2, actualA: 0,
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(result).not.toBe('random_variance')
++    expect(result).toBe('over_predicted_goals')
++  })
++})
++
++// ── Bug: random_variance appliedToRecs = true (Phase A2, bug fix 3) ──────────
++
++describe('random_variance never appliedToRecs (regression)', () => {
++  it('random_variance is never applied regardless of occurrence count or avgPts', () => {
++    const reviews = Array.from({ length: 10 }, (_, i) => ({
++      fixtureId: `f${i}`,
++      homeCode: 'A', awayCode: 'B',
++      engineH: 2, engineA: 0, myH: 2, myA: 0,
++      actualH: 1, actualA: 1, myPts: 0, enginePts: 0,
++      overridden: false, overrideReason: null,
++      evidence: [], verdict: 'Both missed' as const,
++      lesson: '', blindSpot: 'random_variance' as const,
++      deltaVsEngine: 1,
++    }))
++
++    const signals = generateLearningSignals(reviews)
++    const rv = signals.find(s => s.category === 'random_variance')
++    expect(rv?.appliedToRecs).toBe(false)
++  })
++})
++
++// ── Bug: over_predicted_goals missing lesson (Phase A2 + validation, bug fix 7) ──
++
++describe('over_predicted_goals has a lesson string (regression)', () => {
++  it('lesson contains "lower scorelines" for over_predicted_goals blind spot', () => {
++    const review = generateMatchReview({
++      fixture: makeFixture('sui-can', 'sui', 'can'),
++      home: makeTeam('sui', 'SUI', 1840, 'B'),
++      away: makeTeam('can', 'CAN', 1720, 'B'),
++      locked: makeLocked('sui-can', 2, 1),
++      rec: makePoolRec('sui-can', 2, 1),
++      result: makeResult('sui-can', 1, 0),
++      homeAdj: undefined, awayAdj: undefined,
++      homeQual: QUAL_UNKNOWN, awayQual: QUAL_UNKNOWN,
++    })
++    expect(review.blindSpot).toBe('over_predicted_goals')
++    expect(review.lesson).toContain('lower scorelines')
++  })
++})
+diff --git a/worldcup-app/src/__tests__/test-factories.ts b/worldcup-app/src/__tests__/test-factories.ts
+new file mode 100644
+index 0000000..ce1dc15
+--- /dev/null
++++ b/worldcup-app/src/__tests__/test-factories.ts
+@@ -0,0 +1,113 @@
++// Shared factory helpers for test data.
++// All factories return fully typed objects matching the production interfaces.
++
++import type { SeedTeam, SeedFixture, SeedPrediction } from '@/lib/seed-data'
++import type { ActualResult, HumanPrediction } from '@/lib/types'
++import type { LockedPrediction, PoolRecommendation } from '@/lib/store'
++import type { QualificationStatus, GroupStanding } from '@/lib/team-stats'
++import type { TeamAdjustment } from '@/lib/learning-layer'
++import type { MatchContext } from '@/lib/match-context'
++
++export { type QualificationStatus }
++
++export const QUAL_UNKNOWN: QualificationStatus = 'unknown'
++export const QUAL_MUST_WIN: QualificationStatus = 'must_win'
++export const QUAL_ROTATION: QualificationStatus = 'rotation_risk'
++export const QUAL_ELIMINATED: QualificationStatus = 'eliminated'
++export const QUAL_LIKELY: QualificationStatus = 'likely_qualified'
++
++export function makeTeam(id: string, code: string, elo = 1700, group = 'A'): SeedTeam {
++  return { id, name: code, code, group, flag_url: '', elo_rating: elo }
++}
++
++export function makeFixture(id: string, home: string, away: string, matchday = 1): SeedFixture {
++  return {
++    id, home_team_id: home, away_team_id: away,
++    group: 'A', stage: 'group', matchday,
++    kickoff_utc: `2026-06-${String(14 + matchday).padStart(2, '0')}T18:00:00Z`,
++    venue: 'Test Stadium',
++  }
++}
++
++export function makePred(fixtureId: string, model: 'A' | 'B' | 'C', homeGoals: number, awayGoals: number): SeedPrediction {
++  return {
++    id: `${fixtureId}-${model}`,
++    fixture_id: fixtureId, model,
++    home_goals: homeGoals, away_goals: awayGoals,
++    home_win_prob: homeGoals > awayGoals ? 0.60 : 0.25,
++    draw_prob: 0.25,
++    away_win_prob: awayGoals > homeGoals ? 0.60 : 0.15,
++  }
++}
++
++export function makeAllPreds(fixtureId: string, homeGoals: number, awayGoals: number): SeedPrediction[] {
++  return (['A', 'B', 'C'] as const).map(m => makePred(fixtureId, m, homeGoals, awayGoals))
++}
++
++export function makeResult(fixtureId: string, home: number, away: number): ActualResult {
++  return { id: `r-${fixtureId}`, fixture_id: fixtureId, home_goals: home, away_goals: away, entered_at: '' }
++}
++
++export function makeLocked(fixtureId: string, home: number, away: number, custom = false, overrideReason?: string): LockedPrediction {
++  return {
++    fixture_id: fixtureId,
++    model: 'A',
++    home_goals: home, away_goals: away,
++    home_win_prob: 0.55, draw_prob: 0.25, away_win_prob: 0.20,
++    locked_at: '2026-06-15T10:00:00Z',
++    pick_source: custom ? 'custom' : 'pool_recommendation',
++    override_reason: overrideReason,
++  }
++}
++
++export function makePoolRec(fixtureId: string, home: number, away: number): PoolRecommendation {
++  return {
++    fixture_id: fixtureId,
++    recommended_home: home,
++    recommended_away: away,
++    recommended_model: 'A',
++    recommendation_reason: 'Model A selected',
++    generated_at: '2026-06-15T08:00:00Z',
++  }
++}
++
++export function makeHumanPred(fixtureId: string, home: number, away: number, comment: string): HumanPrediction {
++  return {
++    id: `hp-${fixtureId}`,
++    fixture_id: fixtureId,
++    home_goals: home, away_goals: away,
++    comment,
++    created_at: '2026-06-15T09:00:00Z',
++  }
++}
++
++export function makeStanding(teamId: string, played: number, won: number, gf: number, ga: number): GroupStanding {
++  const drawn = 0, lost = played - won - drawn
++  return { teamId, position: 1, played, won, drawn, lost, gf, ga, gd: gf - ga, pts: won * 3 }
++}
++
++export function makeAdj(teamId: string, attackFactor: number, defenceFactor: number): TeamAdjustment {
++  return {
++    teamId, teamName: teamId, teamCode: teamId.toUpperCase(), flag: '',
++    attackFactor, defenceFactor,
++    confidence: 'High', matchesPlayed: 3, contributions: [],
++  }
++}
++
++export function makeMatchContext(fixtureId: string, homeAbsences: string[], awayAbsences: string[]): MatchContext {
++  return {
++    fixture_id: fixtureId,
++    source: 'manual',
++    fetched_at: '2026-06-15T08:00:00Z',
++    home_lineup_status: 'unknown',
++    away_lineup_status: 'unknown',
++    home_absences: homeAbsences,
++    away_absences: awayAbsences,
++    home_suspensions: [],
++    away_suspensions: [],
++    home_form: [],
++    away_form: [],
++    impact_signal: 'none',
++    impact_notes: [],
++  }
++}
+diff --git a/worldcup-app/src/app/analysis/page.tsx b/worldcup-app/src/app/analysis/page.tsx
+index 16d2973..7706d96 100644
+--- a/worldcup-app/src/app/analysis/page.tsx
++++ b/worldcup-app/src/app/analysis/page.tsx
+@@ -1,4 +1,4 @@
+-import { AnalysisPanel } from '@/components/analysis/analysis-panel'
++import { PerformancePanel } from '@/components/analysis/performance-panel'
+ 
+ export default function AnalysisPage() {
+   return (
+@@ -6,10 +6,10 @@ export default function AnalysisPage() {
+       <div>
+         <h1 className="text-lg font-bold text-zinc-900">Performance</h1>
+         <p className="text-xs text-zinc-500 mt-0.5">
+-          Track your picks against actual results and review engine diagnostics.
++          Decision history, override intelligence, engine learning, and diagnostics.
+         </p>
+       </div>
+-      <AnalysisPanel />
++      <PerformancePanel />
+     </div>
+   )
+ }
+diff --git a/worldcup-app/src/components/analysis/performance-panel.tsx b/worldcup-app/src/components/analysis/performance-panel.tsx
+new file mode 100644
+index 0000000..41d38ea
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/performance-panel.tsx
+@@ -0,0 +1,69 @@
++'use client'
++import { useState, useEffect } from 'react'
++import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
++import { TabDecisionReview } from './tabs/tab-decision-review'
++import { TabOverrideIntelligence } from './tabs/tab-override-intelligence'
++import { TabEngineLearning } from './tabs/tab-engine-learning'
++import { TabBlindSpots } from './tabs/tab-blind-spots'
++import { TabExactScore } from './tabs/tab-exact-score'
++import { TabDiagnostics } from './tabs/tab-diagnostics'
++import { UpcomingAssistant } from './upcoming-assistant'
++
++const TABS = [
++  { id: 'review',     label: 'Decision Review' },
++  { id: 'overrides',  label: 'Override Intelligence' },
++  { id: 'learning',   label: 'Engine Learning' },
++  { id: 'blindspots', label: 'Blind Spots' },
++  { id: 'exactscore', label: 'Exact Score' },
++  { id: 'diagnostics',label: 'Diagnostics' },
++] as const
++
++type TabId = typeof TABS[number]['id']
++
++export function PerformancePanel() {
++  const [mounted, setMounted] = useState(false)
++  const [tab, setTab] = useState<TabId>('review')
++
++  useEffect(() => setMounted(true), [])
++
++  if (!mounted) return <div className="h-64 animate-pulse rounded-lg bg-zinc-100" />
++
++  return (
++    <div className="space-y-4">
++      <SyncErrorBanner />
++
++      {/* Upcoming risk review always visible at top */}
++      <UpcomingAssistant />
++
++      {/* Tab bar */}
++      <div className="border-b border-zinc-200">
++        <nav className="-mb-px flex gap-0 overflow-x-auto">
++          {TABS.map(t => (
++            <button
++              key={t.id}
++              onClick={() => setTab(t.id)}
++              className={[
++                'whitespace-nowrap px-4 py-2.5 text-xs font-medium border-b-2 transition-colors',
++                tab === t.id
++                  ? 'border-zinc-900 text-zinc-900'
++                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300',
++              ].join(' ')}
++            >
++              {t.label}
++            </button>
++          ))}
++        </nav>
++      </div>
++
++      {/* Tab content */}
++      <div className="min-h-[200px]">
++        {tab === 'review'      && <TabDecisionReview />}
++        {tab === 'overrides'   && <TabOverrideIntelligence />}
++        {tab === 'learning'    && <TabEngineLearning />}
++        {tab === 'blindspots'  && <TabBlindSpots />}
++        {tab === 'exactscore'  && <TabExactScore />}
++        {tab === 'diagnostics' && <TabDiagnostics />}
++      </div>
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-blind-spots.tsx b/worldcup-app/src/components/analysis/tabs/tab-blind-spots.tsx
+new file mode 100644
+index 0000000..46d33a7
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/tabs/tab-blind-spots.tsx
+@@ -0,0 +1,121 @@
++'use client'
++import { useMemo } from 'react'
++import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions } from '@/lib/store'
++import { generateAllReviews } from '@/lib/match-review'
++import { buildBlindSpotProfile } from '@/lib/failure-classifier'
++import { buildTeamAdjustments } from '@/lib/learning-layer'
++import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
++import { Eye } from 'lucide-react'
++
++const CATEGORY_LABELS: Record<string, string> = {
++  over_predicted_goals:          'Over-predicted goals',
++  favourite_overestimated:       'Favourite overestimated',
++  qualification_pressure_ignored:'Qualification pressure ignored',
++  away_attack_underestimated:    'Away attack underestimated',
++  home_attack_underestimated:    'Home attack underestimated',
++  defensive_improvement_ignored: 'Defensive improvement ignored',
++  random_variance:               'Random variance',
++  correct:                       'Correct',
++}
++
++const BAR_COLOR: Record<string, string> = {
++  over_predicted_goals:           'bg-amber-400',
++  favourite_overestimated:        'bg-red-400',
++  qualification_pressure_ignored: 'bg-orange-400',
++  away_attack_underestimated:     'bg-purple-400',
++  home_attack_underestimated:     'bg-indigo-400',
++  defensive_improvement_ignored:  'bg-blue-400',
++  random_variance:                'bg-zinc-300',
++  correct:                        'bg-green-400',
++}
++
++export function TabBlindSpots() {
++  const { profile, total } = useMemo(() => {
++    const fixtures = getFixtures()
++    const teams = getTeams()
++    const results = getResults()
++    const locked = getLockedPredictions()
++    const recs = getPoolRecommendations()
++    const human = getHumanPredictions()
++    const preds = getPredictions()
++    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
++    const standings = computeGroupStandings(fixtures, results)
++
++    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
++    for (const ts of Object.values(standings)) {
++      for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
++    }
++
++    const reviews = generateAllReviews({
++      fixtures, teams, lockedPredictions: locked,
++      poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
++    })
++
++    const profile = buildBlindSpotProfile(reviews.map(r => ({ category: r.blindSpot })))
++    const total = reviews.length
++
++    return { profile, total }
++  }, [])
++
++  if (total === 0) {
++    return (
++      <div className="py-12 text-center">
++        <Eye className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
++        <p className="text-sm text-zinc-500">No match data yet.</p>
++      </div>
++    )
++  }
++
++  // Split correct/failures
++  const failures = profile.filter(p => p.category !== 'correct')
++  const correctEntry = profile.find(p => p.category === 'correct')
++
++  return (
++    <div className="space-y-5">
++      {/* Accuracy headline */}
++      <div className="grid grid-cols-2 gap-3">
++        <div className="rounded-lg bg-green-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Engine correct</p>
++          <p className="text-2xl font-black text-green-700">{correctEntry?.count ?? 0}</p>
++          <p className="text-xs text-zinc-400">{correctEntry?.pct ?? 0}% of matches</p>
++        </div>
++        <div className="rounded-lg bg-red-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Engine missed</p>
++          <p className="text-2xl font-black text-red-600">{total - (correctEntry?.count ?? 0)}</p>
++          <p className="text-xs text-zinc-400">across {failures.length} pattern{failures.length !== 1 ? 's' : ''}</p>
++        </div>
++      </div>
++
++      {/* Failure breakdown */}
++      {failures.length > 0 && (
++        <div className="space-y-2.5">
++          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Failure patterns (engine errors only)</p>
++          {failures.map(p => (
++            <div key={p.category} className="space-y-1">
++              <div className="flex justify-between text-xs">
++                <span className="text-zinc-700 font-medium">{CATEGORY_LABELS[p.category] ?? p.category}</span>
++                <span className="text-zinc-500">{p.count} ({p.pct}%)</span>
++              </div>
++              <div className="h-2 rounded-full bg-zinc-100 overflow-hidden">
++                <div
++                  className={`h-full rounded-full transition-all ${BAR_COLOR[p.category] ?? 'bg-zinc-400'}`}
++                  style={{ width: `${p.pct}%` }}
++                />
++              </div>
++            </div>
++          ))}
++        </div>
++      )}
++
++      {failures.length === 0 && (
++        <div className="rounded-lg bg-green-50 px-4 py-4 text-center text-sm text-green-700">
++          No failure patterns detected — all classified matches were correct.
++        </div>
++      )}
++
++      <p className="text-[10px] text-zinc-400">
++        Based on {total} classified match{total !== 1 ? 'es' : ''}. Patterns drive learning signals once 3+ occur.
++      </p>
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-decision-review.tsx b/worldcup-app/src/components/analysis/tabs/tab-decision-review.tsx
+new file mode 100644
+index 0000000..e6f9df3
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/tabs/tab-decision-review.tsx
+@@ -0,0 +1,137 @@
++'use client'
++import { useMemo } from 'react'
++import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions } from '@/lib/store'
++import { generateAllReviews } from '@/lib/match-review'
++import { buildTeamAdjustments } from '@/lib/learning-layer'
++import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
++import { getPredictions } from '@/lib/store'
++import { Target } from 'lucide-react'
++import { Badge } from '@/components/ui/badge'
++
++const VERDICT_STYLE: Record<string, string> = {
++  'Override succeeded': 'text-green-700 border-green-300 bg-green-50',
++  'Override failed':    'text-red-600 border-red-300 bg-red-50',
++  'Both matched':       'text-blue-700 border-blue-300 bg-blue-50',
++  'Both missed':        'text-zinc-500 border-zinc-200 bg-zinc-50',
++  'Accepted rec':       'text-zinc-600 border-zinc-200',
++  'No rec available':   'text-zinc-400 border-zinc-100',
++}
++
++export function TabDecisionReview() {
++  const reviews = useMemo(() => {
++    const fixtures = getFixtures()
++    const teams = getTeams()
++    const results = getResults()
++    const locked = getLockedPredictions()
++    const recs = getPoolRecommendations()
++    const human = getHumanPredictions()
++    const preds = getPredictions()
++    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
++    const standings = computeGroupStandings(fixtures, results)
++
++    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
++    for (const teamStandings of Object.values(standings)) {
++      for (const s of teamStandings) {
++        qualMap[s.teamId] = computeQualificationStatus(s.teamId, teamStandings, s.played)
++      }
++    }
++
++    return generateAllReviews({
++      fixtures, teams, lockedPredictions: locked,
++      poolRecommendations: recs, results, adjustments, qualMap,
++      humanPredictions: human,
++    })
++  }, [])
++
++  if (reviews.length === 0) {
++    return (
++      <div className="py-12 text-center">
++        <Target className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
++        <p className="text-sm text-zinc-500">No completed matches to review yet.</p>
++        <p className="mt-1 text-xs text-zinc-400">Lock a prediction, then enter the actual score on the Matches page.</p>
++      </div>
++    )
++  }
++
++  const totalPts = reviews.reduce((s, r) => s + r.myPts, 0)
++  const enginePts = reviews.reduce((s, r) => s + (r.enginePts ?? 0), 0)
++  const delta = totalPts - enginePts
++
++  return (
++    <div className="space-y-4">
++      {/* Summary strip */}
++      <div className="grid grid-cols-3 gap-3">
++        <div className="rounded-lg bg-zinc-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Your pts</p>
++          <p className="text-2xl font-black text-zinc-900">{totalPts}</p>
++        </div>
++        <div className="rounded-lg bg-zinc-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Engine pts</p>
++          <p className="text-2xl font-black text-zinc-700">{enginePts}</p>
++        </div>
++        <div className={`rounded-lg p-3 text-center ${delta > 0 ? 'bg-green-50' : delta < 0 ? 'bg-red-50' : 'bg-zinc-50'}`}>
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Delta</p>
++          <p className={`text-2xl font-black ${delta > 0 ? 'text-green-700' : delta < 0 ? 'text-red-600' : 'text-zinc-500'}`}>
++            {delta > 0 ? '+' : ''}{delta}
++          </p>
++        </div>
++      </div>
++
++      {/* Match rows */}
++      <div className="overflow-x-auto rounded-lg border border-zinc-100">
++        <table className="w-full text-xs">
++          <thead>
++            <tr className="border-b border-zinc-100 bg-zinc-50">
++              <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Engine</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Your pick</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Pts</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Verdict</th>
++            </tr>
++          </thead>
++          <tbody>
++            {reviews.map(r => (
++              <tr key={r.fixtureId} className="border-b border-zinc-50 hover:bg-zinc-50/50">
++                <td className="px-3 py-2.5 font-medium text-zinc-900 whitespace-nowrap">
++                  {r.homeCode} <span className="text-zinc-300">v</span> {r.awayCode}
++                </td>
++                <td className="px-3 py-2.5 text-center font-mono text-zinc-400">
++                  {r.engineH != null ? `${r.engineH}–${r.engineA}` : '—'}
++                </td>
++                <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-700">
++                  {r.myH}–{r.myA}
++                </td>
++                <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">
++                  {r.actualH}–{r.actualA}
++                </td>
++                <td className="px-3 py-2.5 text-center">
++                  <span className={`font-bold text-sm ${r.myPts === 4 ? 'text-green-700' : r.myPts === 2 ? 'text-blue-600' : r.myPts === 1 ? 'text-amber-600' : 'text-red-500'}`}>
++                    {r.myPts}
++                  </span>
++                </td>
++                <td className="px-3 py-2.5 text-center">
++                  <Badge variant="outline" className={`text-[10px] ${VERDICT_STYLE[r.verdict] ?? ''}`}>
++                    {r.verdict}
++                  </Badge>
++                </td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++      </div>
++
++      {/* Lessons */}
++      {reviews.some(r => r.lesson) && (
++        <div className="space-y-1.5">
++          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Lessons</p>
++          {reviews.filter(r => r.lesson).map(r => (
++            <div key={r.fixtureId} className="rounded bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
++              <span className="font-medium text-zinc-900">{r.homeCode} v {r.awayCode}:</span> {r.lesson}
++            </div>
++          ))}
++        </div>
++      )}
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-diagnostics.tsx b/worldcup-app/src/components/analysis/tabs/tab-diagnostics.tsx
+new file mode 100644
+index 0000000..8a1ae20
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/tabs/tab-diagnostics.tsx
+@@ -0,0 +1,133 @@
++'use client'
++import { ModelHealth } from '@/components/analysis/model-health'
++import { DisagreementAnalysis } from '@/components/analysis/disagreement-analysis'
++import { DecisionEngine } from '@/components/analysis/decision-engine'
++import { useMemo } from 'react'
++import { getFixtures, getTeams, getResults, computeCalibration } from '@/lib/store'
++import { getLockedPredictions, getPredictions } from '@/lib/store'
++import { getOutcome } from '@/lib/models'
++import { MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
++
++const MODELS = ['A', 'B', 'C'] as const
++
++export function TabDiagnostics() {
++  const { leaderboard, calibration, comparisons } = useMemo(() => {
++    const fixtures = getFixtures()
++    const teams = getTeams()
++    const results = getResults()
++    const allPreds = getPredictions()
++    const lockedPreds = getLockedPredictions()
++    const calibration = computeCalibration()
++    const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
++
++    const comparisons = results.flatMap(result => {
++      const fixture = fixtures.find(f => f.id === result.fixture_id)
++      if (!fixture) return []
++      const home = teamMap[fixture.home_team_id]
++      const away = teamMap[fixture.away_team_id]
++      if (!home || !away) return []
++      const locked = lockedPreds.find(p => p.fixture_id === result.fixture_id)
++      const actualOutcome = getOutcome(result.home_goals, result.away_goals)
++
++      const models = Object.fromEntries(MODELS.map(m => {
++        const pred = allPreds.find(p => p.fixture_id === result.fixture_id && p.model === m)
++        if (!pred) return [m, null]
++        return [m, {
++          predHome: pred.home_goals, predAway: pred.away_goals,
++          outcomeCorrect: getOutcome(pred.home_goals, pred.away_goals) === actualOutcome,
++          goalErr: Math.abs(pred.home_goals - result.home_goals) + Math.abs(pred.away_goals - result.away_goals),
++        }]
++      }))
++
++      return [{
++        fixtureId: fixture.id,
++        homeCode: home.code, awayCode: away.code,
++        date: fixture.kickoff_utc, group: fixture.group ?? '',
++        lockedModel: locked?.model ?? null,
++        actual: { home: result.home_goals, away: result.away_goals },
++        models,
++      }]
++    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
++
++    const leaderboard = MODELS.map(m => {
++      const entries = comparisons.map(c => c.models[m]).filter(Boolean)
++      const correct = entries.filter(e => e!.outcomeCorrect).length
++      return {
++        model: m,
++        matches: entries.length,
++        correct,
++        accuracy: entries.length > 0 ? correct / entries.length : 0,
++        avgGoalErr: entries.length > 0 ? entries.reduce((s, e) => s + e!.goalErr, 0) / entries.length : 0,
++      }
++    }).sort((a, b) => b.accuracy - a.accuracy || a.avgGoalErr - b.avgGoalErr)
++
++    return { leaderboard, calibration, comparisons }
++  }, [])
++
++  const bestModel = leaderboard[0]?.accuracy > 0 ? leaderboard[0].model : null
++
++  return (
++    <div className="space-y-6">
++      <DecisionEngine />
++      <ModelHealth />
++      <DisagreementAnalysis />
++
++      {/* Model leaderboard */}
++      <div className="space-y-2">
++        <p className="text-sm font-semibold text-zinc-700">Model Leaderboard</p>
++        <p className="text-xs text-zinc-400">Outcome accuracy and goal error across all played matches.</p>
++        <div className="overflow-x-auto rounded-lg border border-zinc-100">
++          <table className="w-full text-xs">
++            <thead>
++              <tr className="border-b border-zinc-100 bg-zinc-50">
++                <th className="px-4 py-2 text-left font-medium text-zinc-500">Rank</th>
++                <th className="px-4 py-2 text-left font-medium text-zinc-500">Model</th>
++                <th className="px-4 py-2 text-center font-medium text-zinc-500">Matches</th>
++                <th className="px-4 py-2 text-center font-medium text-zinc-500">Correct</th>
++                <th className="px-4 py-2 text-center font-medium text-zinc-500">Accuracy</th>
++                <th className="px-4 py-2 text-center font-medium text-zinc-500">Avg goal err</th>
++                <th className="px-4 py-2 text-center font-medium text-zinc-500">Calibration</th>
++              </tr>
++            </thead>
++            <tbody>
++              {leaderboard.map((s, i) => {
++                const cal = calibration.find(c => c.model === s.model)
++                return (
++                  <tr key={s.model} className={`border-b border-zinc-50 ${i === 0 && s.accuracy > 0 ? 'bg-green-50' : ''}`}>
++                    <td className="px-4 py-2.5 font-bold text-zinc-400">#{i + 1}</td>
++                    <td className="px-4 py-2.5">
++                      <div className="flex items-center gap-1.5">
++                        <span className={`inline-flex rounded px-1.5 py-0.5 text-white text-xs ${MODEL_COLORS[s.model]}`}>
++                          {MODEL_LABELS[s.model]}
++                        </span>
++                        {i === 0 && s.accuracy > 0 && <span className="text-xs text-green-600 font-medium">Best</span>}
++                      </div>
++                    </td>
++                    <td className="px-4 py-2.5 text-center text-zinc-700">{s.matches}</td>
++                    <td className="px-4 py-2.5 text-center text-zinc-700">{s.correct}</td>
++                    <td className="px-4 py-2.5 text-center font-semibold text-zinc-900">{Math.round(s.accuracy * 100)}%</td>
++                    <td className="px-4 py-2.5 text-center">
++                      <span className={s.avgGoalErr <= 1.5 ? 'text-green-600 font-medium' : s.avgGoalErr <= 2.5 ? 'text-yellow-600' : 'text-red-500'}>
++                        {s.avgGoalErr.toFixed(2)}
++                      </span>
++                    </td>
++                    <td className="px-4 py-2.5 text-center text-zinc-500">
++                      {cal && cal.matchCount >= 3
++                        ? `H×${cal.homeScale.toFixed(2)} A×${cal.awayScale.toFixed(2)}`
++                        : <span className="text-zinc-300">need 3+</span>}
++                    </td>
++                  </tr>
++                )
++              })}
++            </tbody>
++          </table>
++        </div>
++        {bestModel && (
++          <p className="text-xs text-zinc-500 px-1">
++            Best performer: {MODEL_LABELS[bestModel]} — leading on accuracy across {comparisons.length} played matches.
++          </p>
++        )}
++      </div>
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-engine-learning.tsx b/worldcup-app/src/components/analysis/tabs/tab-engine-learning.tsx
+new file mode 100644
+index 0000000..9ee3e5a
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/tabs/tab-engine-learning.tsx
+@@ -0,0 +1,115 @@
++'use client'
++import { useMemo } from 'react'
++import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions } from '@/lib/store'
++import { generateAllReviews } from '@/lib/match-review'
++import { generateLearningSignals } from '@/lib/learning-signals'
++import { buildTeamAdjustments } from '@/lib/learning-layer'
++import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
++import { Brain } from 'lucide-react'
++import { Badge } from '@/components/ui/badge'
++
++const STRENGTH_STYLE: Record<string, string> = {
++  Strong:   'bg-green-100 text-green-800 border-green-200',
++  Moderate: 'bg-amber-100 text-amber-800 border-amber-200',
++  Weak:     'bg-zinc-100 text-zinc-600 border-zinc-200',
++}
++
++export function TabEngineLearning() {
++  const signals = useMemo(() => {
++    const fixtures = getFixtures()
++    const teams = getTeams()
++    const results = getResults()
++    const locked = getLockedPredictions()
++    const recs = getPoolRecommendations()
++    const human = getHumanPredictions()
++    const preds = getPredictions()
++    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
++    const standings = computeGroupStandings(fixtures, results)
++
++    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
++    for (const ts of Object.values(standings)) {
++      for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
++    }
++
++    const reviews = generateAllReviews({
++      fixtures, teams, lockedPredictions: locked,
++      poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
++    })
++
++    return generateLearningSignals(reviews)
++  }, [])
++
++  if (signals.length === 0) {
++    return (
++      <div className="py-12 text-center">
++        <Brain className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
++        <p className="text-sm text-zinc-500">Not enough match data to derive learning signals yet.</p>
++        <p className="mt-1 text-xs text-zinc-400">Signals appear after 3+ matches with the same failure pattern.</p>
++      </div>
++    )
++  }
++
++  const active = signals.filter(s => s.appliedToRecs)
++  const inactive = signals.filter(s => !s.appliedToRecs)
++
++  return (
++    <div className="space-y-5">
++      <div className="grid grid-cols-3 gap-3 text-center">
++        <div className="rounded-lg bg-zinc-50 p-3">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Total signals</p>
++          <p className="text-2xl font-black text-zinc-900">{signals.length}</p>
++        </div>
++        <div className="rounded-lg bg-green-50 p-3">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Applied</p>
++          <p className="text-2xl font-black text-green-700">{active.length}</p>
++        </div>
++        <div className="rounded-lg bg-zinc-50 p-3">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Monitoring</p>
++          <p className="text-2xl font-black text-zinc-600">{inactive.length}</p>
++        </div>
++      </div>
++
++      {active.length > 0 && (
++        <div className="space-y-2">
++          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Applied to recommendations</p>
++          {active.map(sig => (
++            <SignalCard key={sig.id} sig={sig} />
++          ))}
++        </div>
++      )}
++
++      {inactive.length > 0 && (
++        <div className="space-y-2">
++          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Monitoring (not yet applied)</p>
++          {inactive.map(sig => (
++            <SignalCard key={sig.id} sig={sig} />
++          ))}
++        </div>
++      )}
++    </div>
++  )
++}
++
++function SignalCard({ sig }: { sig: import('@/lib/learning-signals').LearningSignal }) {
++  const ptsSign = sig.avgPtsImprovement >= 0 ? '+' : ''
++  return (
++    <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-4 py-3 space-y-1.5">
++      <div className="flex items-center justify-between gap-2">
++        <span className="text-xs font-semibold text-zinc-900">{sig.lesson}</span>
++        <Badge variant="outline" className={`text-[10px] shrink-0 ${STRENGTH_STYLE[sig.strength] ?? ''}`}>
++          {sig.strength}
++        </Badge>
++      </div>
++      <div className="flex gap-4 text-[10px] text-zinc-500">
++        <span>{sig.occurrences} occurrences</span>
++        <span>Confidence: {sig.confidence}</span>
++        <span>Avg Δpts: <span className={sig.avgPtsImprovement > 0 ? 'text-green-600 font-medium' : 'text-red-500 font-medium'}>
++          {ptsSign}{sig.avgPtsImprovement.toFixed(2)}
++        </span></span>
++        <span className={sig.appliedToRecs ? 'text-green-600 font-medium' : 'text-zinc-400'}>
++          {sig.appliedToRecs ? '✓ active' : 'monitoring'}
++        </span>
++      </div>
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-exact-score.tsx b/worldcup-app/src/components/analysis/tabs/tab-exact-score.tsx
+new file mode 100644
+index 0000000..99efbce
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/tabs/tab-exact-score.tsx
+@@ -0,0 +1,131 @@
++'use client'
++import { useMemo } from 'react'
++import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions } from '@/lib/store'
++import { generateAllReviews } from '@/lib/match-review'
++import { buildExactScoreProfile } from '@/lib/exact-score-analysis'
++import { buildTeamAdjustments } from '@/lib/learning-layer'
++import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
++import { Crosshair } from 'lucide-react'
++
++export function TabExactScore() {
++  const { profile, total } = useMemo(() => {
++    const fixtures = getFixtures()
++    const teams = getTeams()
++    const results = getResults()
++    const locked = getLockedPredictions()
++    const recs = getPoolRecommendations()
++    const human = getHumanPredictions()
++    const preds = getPredictions()
++    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
++    const standings = computeGroupStandings(fixtures, results)
++
++    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
++    for (const ts of Object.values(standings)) {
++      for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
++    }
++
++    const reviews = generateAllReviews({
++      fixtures, teams, lockedPredictions: locked,
++      poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
++    })
++
++    return { profile: buildExactScoreProfile(reviews), total: reviews.length }
++  }, [])
++
++  if (total === 0) {
++    return (
++      <div className="py-12 text-center">
++        <Crosshair className="mx-auto mb-3 h-8 w-8 text-zinc-300" />
++        <p className="text-sm text-zinc-500">No completed matches yet.</p>
++      </div>
++    )
++  }
++
++  const { distribution: d, avgPts, homeGoalBias, awayGoalBias, missedPatterns, topMissedPattern } = profile
++
++  const bars = [
++    { pts: 4, count: d.exact,    label: '4 pts · Exact score',       bar: 'bg-green-500' },
++    { pts: 2, count: d.gdWin,    label: '2 pts · Winner + GD',        bar: 'bg-blue-400' },
++    { pts: 1, count: d.winOnly,  label: '1 pt  · Correct winner',     bar: 'bg-amber-400' },
++    { pts: 0, count: d.miss,     label: '0 pts · Missed',             bar: 'bg-red-400' },
++  ]
++
++  return (
++    <div className="space-y-5">
++      {/* Point distribution */}
++      <div className="space-y-2.5">
++        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
++          Pool point distribution ({d.total} picks)
++        </p>
++        {bars.map(({ pts, count, label, bar }) => (
++          <div key={pts} className="flex items-center gap-3">
++            <span className="w-36 shrink-0 text-xs text-zinc-600">{label}</span>
++            <div className="flex-1 h-2.5 rounded-full bg-zinc-100 overflow-hidden">
++              <div
++                className={`h-full rounded-full transition-all ${bar}`}
++                style={{ width: d.total > 0 ? `${(count / d.total) * 100}%` : '0%' }}
++              />
++            </div>
++            <span className="w-16 text-right text-xs font-semibold text-zinc-700">
++              {count} <span className="font-normal text-zinc-400">({Math.round((count / d.total) * 100)}%)</span>
++            </span>
++          </div>
++        ))}
++      </div>
++
++      {/* Stats */}
++      <div className="grid grid-cols-3 gap-3">
++        <div className="rounded-lg bg-zinc-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Avg pts / match</p>
++          <p className={`text-2xl font-black ${avgPts >= 2 ? 'text-green-700' : avgPts >= 1 ? 'text-amber-600' : 'text-red-500'}`}>
++            {avgPts.toFixed(2)}
++          </p>
++        </div>
++        <div className="rounded-lg bg-zinc-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Home goal bias</p>
++          <p className={`text-2xl font-black tabular-nums ${Math.abs(homeGoalBias) < 0.3 ? 'text-zinc-700' : 'text-amber-600'}`}>
++            {homeGoalBias >= 0 ? '+' : ''}{homeGoalBias.toFixed(2)}
++          </p>
++        </div>
++        <div className="rounded-lg bg-zinc-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Away goal bias</p>
++          <p className={`text-2xl font-black tabular-nums ${Math.abs(awayGoalBias) < 0.3 ? 'text-zinc-700' : 'text-amber-600'}`}>
++            {awayGoalBias >= 0 ? '+' : ''}{awayGoalBias.toFixed(2)}
++          </p>
++        </div>
++      </div>
++
++      {topMissedPattern && (
++        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
++          <span className="font-semibold">Top pattern: </span>{topMissedPattern}
++        </div>
++      )}
++
++      {missedPatterns.length > 0 && (
++        <div className="space-y-2">
++          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Missed score patterns (2+ occurrences)</p>
++          <div className="overflow-x-auto rounded-lg border border-zinc-100">
++            <table className="w-full text-xs">
++              <thead>
++                <tr className="border-b border-zinc-100 bg-zinc-50">
++                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Predicted</th>
++                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Actual</th>
++                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Count</th>
++                </tr>
++              </thead>
++              <tbody>
++                {missedPatterns.map((p, i) => (
++                  <tr key={i} className="border-b border-zinc-50">
++                    <td className="px-3 py-2 font-mono text-zinc-700">{p.predicted}</td>
++                    <td className="px-3 py-2 font-mono text-zinc-900 font-semibold">{p.actual}</td>
++                    <td className="px-3 py-2 text-center text-zinc-600">{p.count}</td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++        </div>
++      )}
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-override-intelligence.tsx b/worldcup-app/src/components/analysis/tabs/tab-override-intelligence.tsx
+new file mode 100644
+index 0000000..d7957c4
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/tabs/tab-override-intelligence.tsx
+@@ -0,0 +1,165 @@
++'use client'
++import { useMemo } from 'react'
++import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions } from '@/lib/store'
++import { generateAllReviews } from '@/lib/match-review'
++import { buildTeamAdjustments } from '@/lib/learning-layer'
++import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
++import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
++
++export function TabOverrideIntelligence() {
++  const { reviews, overrides, accepted } = useMemo(() => {
++    const fixtures = getFixtures()
++    const teams = getTeams()
++    const results = getResults()
++    const locked = getLockedPredictions()
++    const recs = getPoolRecommendations()
++    const human = getHumanPredictions()
++    const preds = getPredictions()
++    const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
++    const standings = computeGroupStandings(fixtures, results)
++
++    const qualMap: Record<string, import('@/lib/team-stats').QualificationStatus> = {}
++    for (const ts of Object.values(standings)) {
++      for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
++    }
++
++    const reviews = generateAllReviews({
++      fixtures, teams, lockedPredictions: locked,
++      poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
++    })
++
++    return {
++      reviews,
++      overrides: reviews.filter(r => r.overridden),
++      accepted: reviews.filter(r => !r.overridden && r.enginePts != null),
++    }
++  }, [])
++
++  if (reviews.length === 0) {
++    return (
++      <div className="py-12 text-center">
++        <p className="text-sm text-zinc-500">No completed matches yet.</p>
++      </div>
++    )
++  }
++
++  const overrideWins   = overrides.filter(r => r.verdict === 'Override succeeded').length
++  const overrideLosses = overrides.filter(r => r.verdict === 'Override failed').length
++  const overrideNeutral = overrides.length - overrideWins - overrideLosses
++
++  const overridePts  = overrides.reduce((s, r) => s + r.myPts, 0)
++  const recPts       = overrides.reduce((s, r) => s + (r.enginePts ?? 0), 0)
++  const overrideDelta = overridePts - recPts
++
++  const acceptedMyPts  = accepted.reduce((s, r) => s + r.myPts, 0)
++  const acceptedEngPts = accepted.reduce((s, r) => s + (r.enginePts ?? 0), 0)
++
++  const winRate = overrides.length > 0 ? (overrideWins / overrides.length) * 100 : null
++
++  return (
++    <div className="space-y-5">
++      {/* Override summary */}
++      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
++        <div className="rounded-lg bg-zinc-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Overrides</p>
++          <p className="text-2xl font-black text-zinc-900">{overrides.length}</p>
++        </div>
++        <div className="rounded-lg bg-zinc-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Win rate</p>
++          <p className={`text-2xl font-black ${winRate === null ? 'text-zinc-400' : winRate >= 50 ? 'text-green-700' : 'text-red-600'}`}>
++            {winRate === null ? '—' : `${Math.round(winRate)}%`}
++          </p>
++        </div>
++        <div className={`rounded-lg p-3 text-center ${overrideDelta > 0 ? 'bg-green-50' : overrideDelta < 0 ? 'bg-red-50' : 'bg-zinc-50'}`}>
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Override delta</p>
++          <p className={`text-2xl font-black ${overrideDelta > 0 ? 'text-green-700' : overrideDelta < 0 ? 'text-red-600' : 'text-zinc-500'}`}>
++            {overrideDelta > 0 ? '+' : ''}{overrideDelta}
++          </p>
++        </div>
++        <div className="rounded-lg bg-zinc-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Accepted rec delta</p>
++          <p className={`text-2xl font-black ${acceptedMyPts - acceptedEngPts > 0 ? 'text-green-700' : acceptedMyPts - acceptedEngPts < 0 ? 'text-red-600' : 'text-zinc-500'}`}>
++            {acceptedMyPts - acceptedEngPts > 0 ? '+' : ''}{acceptedMyPts - acceptedEngPts}
++          </p>
++        </div>
++      </div>
++
++      {/* W/L/N breakdown */}
++      {overrides.length > 0 && (
++        <div className="grid grid-cols-3 gap-2 text-center text-xs">
++          <div className="rounded bg-green-50 px-3 py-2">
++            <TrendingUp className="mx-auto mb-1 h-4 w-4 text-green-600" />
++            <p className="font-bold text-green-700 text-lg">{overrideWins}</p>
++            <p className="text-green-600">Overrides won</p>
++          </div>
++          <div className="rounded bg-zinc-50 px-3 py-2">
++            <Minus className="mx-auto mb-1 h-4 w-4 text-zinc-400" />
++            <p className="font-bold text-zinc-600 text-lg">{overrideNeutral}</p>
++            <p className="text-zinc-500">Neutral</p>
++          </div>
++          <div className="rounded bg-red-50 px-3 py-2">
++            <TrendingDown className="mx-auto mb-1 h-4 w-4 text-red-500" />
++            <p className="font-bold text-red-600 text-lg">{overrideLosses}</p>
++            <p className="text-red-600">Overrides lost</p>
++          </div>
++        </div>
++      )}
++
++      {/* Override detail table */}
++      {overrides.length > 0 && (
++        <div className="space-y-2">
++          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Override history</p>
++          <div className="overflow-x-auto rounded-lg border border-zinc-100">
++            <table className="w-full text-xs">
++              <thead>
++                <tr className="border-b border-zinc-100 bg-zinc-50">
++                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
++                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Engine</th>
++                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Your pick</th>
++                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
++                  <th className="px-3 py-2 text-center font-medium text-zinc-500">Δ pts</th>
++                  <th className="px-3 py-2 text-left font-medium text-zinc-500">Reason</th>
++                </tr>
++              </thead>
++              <tbody>
++                {overrides.map(r => {
++                  const delta = r.deltaVsEngine ?? 0
++                  return (
++                    <tr key={r.fixtureId} className="border-b border-zinc-50 hover:bg-zinc-50/50">
++                      <td className="px-3 py-2.5 font-medium text-zinc-900 whitespace-nowrap">
++                        {r.homeCode} v {r.awayCode}
++                      </td>
++                      <td className="px-3 py-2.5 text-center font-mono text-zinc-400">
++                        {r.engineH != null ? `${r.engineH}–${r.engineA}` : '—'}
++                      </td>
++                      <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-700">
++                        {r.myH}–{r.myA}
++                      </td>
++                      <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">
++                        {r.actualH}–{r.actualA}
++                      </td>
++                      <td className="px-3 py-2.5 text-center">
++                        <span className={`font-bold ${delta > 0 ? 'text-green-700' : delta < 0 ? 'text-red-600' : 'text-zinc-400'}`}>
++                          {delta > 0 ? '+' : ''}{delta}
++                        </span>
++                      </td>
++                      <td className="px-3 py-2.5 text-zinc-500 max-w-[160px] truncate">
++                        {r.overrideReason ?? <span className="text-zinc-300">—</span>}
++                      </td>
++                    </tr>
++                  )
++                })}
++              </tbody>
++            </table>
++          </div>
++        </div>
++      )}
++
++      {overrides.length === 0 && (
++        <div className="rounded-lg bg-zinc-50 px-4 py-6 text-center text-sm text-zinc-500">
++          No overrides recorded yet. When you deviate from the engine recommendation, it will appear here.
++        </div>
++      )}
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/lib/failure-classifier.ts b/worldcup-app/src/lib/failure-classifier.ts
+index e6c14d8..259ae3c 100644
+--- a/worldcup-app/src/lib/failure-classifier.ts
++++ b/worldcup-app/src/lib/failure-classifier.ts
+@@ -11,6 +11,7 @@ export type BlindSpotCategory =
+   | 'defensive_improvement_ignored'
+   | 'qualification_pressure_ignored'
+   | 'favourite_overestimated'
++  | 'over_predicted_goals'
+   | 'random_variance'
+   | 'correct'
+ 
+@@ -27,6 +28,7 @@ const LABELS: Record<BlindSpotCategory, string> = {
+   defensive_improvement_ignored: 'Defensive improvements ignored',
+   qualification_pressure_ignored:'Qualification pressure ignored',
+   favourite_overestimated:       'Favourite overestimated',
++  over_predicted_goals:          'Goals over-predicted',
+   random_variance:               'Random variance',
+   correct:                       'Correct prediction',
+ }
+@@ -68,10 +70,7 @@ export function classifyEngineFailure({
+   const actualTotal = actualH + actualA
+   if (
+     predTotal - actualTotal >= 2 &&
+-    (
+-      (homeAdj && homeAdj.defenceFactor <= 0.88) ||
+-      (awayAdj && awayAdj.defenceFactor <= 0.88)
+-    )
++    ((homeAdj && homeAdj.defenceFactor <= 0.88) || (awayAdj && awayAdj.defenceFactor <= 0.88))
+   ) {
+     return 'defensive_improvement_ignored'
+   }
+@@ -97,6 +96,12 @@ export function classifyEngineFailure({
+     return 'favourite_overestimated'
+   }
+ 
++  // Engine predicted more goals than actually scored (systematic over-prediction).
++  // Threshold: total predicted goals exceed actual total by ≥1 with same winner.
++  if (predTotal - actualTotal >= 1 && recOutcome === actualOutcome) {
++    return 'over_predicted_goals'
++  }
++
+   return 'random_variance'
+ }
+ 
+diff --git a/worldcup-app/src/lib/learning-signals.ts b/worldcup-app/src/lib/learning-signals.ts
+index 49c6563..f38489d 100644
+--- a/worldcup-app/src/lib/learning-signals.ts
++++ b/worldcup-app/src/lib/learning-signals.ts
+@@ -41,12 +41,16 @@ function computeConfidence(occurrences: number): 'High' | 'Medium' | 'Low' {
+ 
+ // ── Lesson strings ────────────────────────────────────────────────────────────
+ 
++// Categories that are never actionable — surfaced for information only
++const NON_ACTIONABLE = new Set<BlindSpotCategory>(['random_variance'])
++
+ const LESSONS: Record<string, string> = {
+   away_attack_underestimated:    'Away team attacks are consistently underestimated',
+   home_attack_underestimated:    'Home team attacks are consistently underestimated',
+   defensive_improvement_ignored: 'Defensive improvements are underweighted in predictions',
+   qualification_pressure_ignored:'Must-win pressure boosts team performance beyond engine baseline',
+   favourite_overestimated:       'Heavy favourites are over-predicted — upsets are more common than modelled',
++  over_predicted_goals:          'Engine consistently predicts more goals than materialise — trust lower scorelines',
+   random_variance:               'Outcomes without identifiable signals — within normal variance',
+ }
+ 
+@@ -84,7 +88,8 @@ export function generateLearningSignals(reviews: MatchReview[]): LearningSignal[
+       avgPtsImprovement: Math.round(avgPtsImprovement * 100) / 100,
+       confidence,
+       strength,
+-      appliedToRecs: strength !== 'Weak',
++      // Never apply non-actionable categories or signals with net-negative impact
++      appliedToRecs: strength !== 'Weak' && !NON_ACTIONABLE.has(category) && avgPtsImprovement > 0,
+     })
+   }
+ 
+diff --git a/worldcup-app/src/lib/match-review.ts b/worldcup-app/src/lib/match-review.ts
+index 1281112..1f7d49c 100644
+--- a/worldcup-app/src/lib/match-review.ts
++++ b/worldcup-app/src/lib/match-review.ts
+@@ -4,7 +4,7 @@
+ // written to the match_reviews Supabase table via learning-repository.ts.
+ 
+ import type { SeedFixture, SeedTeam } from './seed-data'
+-import type { ActualResult } from './types'
++import type { ActualResult, HumanPrediction } from './types'
+ import type { LockedPrediction, PoolRecommendation } from './store'
+ import type { TeamAdjustment } from './learning-layer'
+ import type { QualificationStatus } from './team-stats'
+@@ -116,6 +116,8 @@ function deriveLessonFromBlindSpot(
+       return `Must-win pressure drove a better performance than engine predicted`
+     case 'favourite_overestimated':
+       return `Engine overestimated the favourite — tournament context created an upset`
++    case 'over_predicted_goals':
++      return `Engine over-predicted total goals — trust lower scorelines in future`
+     case 'random_variance':
+       return `No systematic signal identified — outcome was within normal variance`
+     default:
+@@ -157,11 +159,12 @@ export interface GenerateReviewParams {
+   awayAdj: TeamAdjustment | undefined
+   homeQual: QualificationStatus
+   awayQual: QualificationStatus
++  humanPred?: HumanPrediction
+ }
+ 
+ export function generateMatchReview({
+   fixture, home, away, locked, rec, result,
+-  homeAdj, awayAdj, homeQual, awayQual,
++  homeAdj, awayAdj, homeQual, awayQual, humanPred,
+ }: GenerateReviewParams): MatchReview {
+   const homeCode = home?.code ?? fixture.home_team_id.toUpperCase()
+   const awayCode = away?.code ?? fixture.away_team_id.toUpperCase()
+@@ -180,7 +183,8 @@ export function generateMatchReview({
+     : null
+ 
+   const overridden = locked.pick_source === 'custom'
+-  const overrideReason = locked.override_reason ?? null
++  // Prefer structured override_reason; fall back to human prediction comment
++  const overrideReason = locked.override_reason ?? humanPred?.comment ?? null
+ 
+   const verdict  = deriveVerdict(overridden, myPts, enginePts)
+   const evidence = buildEvidence(homeCode, awayCode, homeAdj, awayAdj, homeQual, awayQual)
+@@ -229,13 +233,15 @@ export function generateAllReviews(params: {
+   results: ActualResult[]
+   adjustments: TeamAdjustment[]
+   qualMap: Record<string, QualificationStatus>
++  humanPredictions?: HumanPrediction[]
+ }): MatchReview[] {
+-  const { fixtures, teams, lockedPredictions, poolRecommendations, results, adjustments, qualMap } = params
+-  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
++  const { fixtures, teams, lockedPredictions, poolRecommendations, results, adjustments, qualMap, humanPredictions = [] } = params
++  const teamMap   = Object.fromEntries(teams.map(t => [t.id, t]))
+   const resultMap = Object.fromEntries(results.map(r => [r.fixture_id, r]))
+   const recMap    = Object.fromEntries(poolRecommendations.map(r => [r.fixture_id, r]))
+   const adjMap    = Object.fromEntries(adjustments.map(a => [a.teamId, a]))
+   const lockedMap = Object.fromEntries(lockedPredictions.map(p => [p.fixture_id, p]))
++  const humanMap  = Object.fromEntries(humanPredictions.map(h => [h.fixture_id, h]))
+ 
+   const reviews: MatchReview[] = []
+   for (const fixture of fixtures) {
+@@ -255,6 +261,7 @@ export function generateAllReviews(params: {
+       awayAdj: adjMap[fixture.away_team_id],
+       homeQual: qualMap[fixture.home_team_id] ?? 'alive',
+       awayQual: qualMap[fixture.away_team_id] ?? 'alive',
++      humanPred: humanMap[fixture.id],
+     }))
+   }
+   return reviews
+diff --git a/worldcup-app/vitest.config.ts b/worldcup-app/vitest.config.ts
+new file mode 100644
+index 0000000..bf895a8
+--- /dev/null
++++ b/worldcup-app/vitest.config.ts
+@@ -0,0 +1,14 @@
++import { defineConfig } from 'vitest/config'
++import path from 'path'
++
++export default defineConfig({
++  test: {
++    environment: 'node',
++    globals: true,
++  },
++  resolve: {
++    alias: {
++      '@': path.resolve(__dirname, './src'),
++    },
++  },
++})
+-- 
+2.43.0
+
