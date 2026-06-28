@@ -4,7 +4,7 @@
 // written to the match_reviews Supabase table via learning-repository.ts.
 
 import type { SeedFixture, SeedTeam } from './seed-data'
-import type { ActualResult } from './types'
+import type { ActualResult, HumanPrediction } from './types'
 import type { LockedPrediction, PoolRecommendation } from './store'
 import type { TeamAdjustment } from './learning-layer'
 import type { QualificationStatus } from './team-stats'
@@ -116,6 +116,8 @@ function deriveLessonFromBlindSpot(
       return `Must-win pressure drove a better performance than engine predicted`
     case 'favourite_overestimated':
       return `Engine overestimated the favourite — tournament context created an upset`
+    case 'over_predicted_goals':
+      return `Engine over-predicted total goals — trust lower scorelines in future`
     case 'random_variance':
       return `No systematic signal identified — outcome was within normal variance`
     default:
@@ -157,11 +159,12 @@ export interface GenerateReviewParams {
   awayAdj: TeamAdjustment | undefined
   homeQual: QualificationStatus
   awayQual: QualificationStatus
+  humanPred?: HumanPrediction
 }
 
 export function generateMatchReview({
   fixture, home, away, locked, rec, result,
-  homeAdj, awayAdj, homeQual, awayQual,
+  homeAdj, awayAdj, homeQual, awayQual, humanPred,
 }: GenerateReviewParams): MatchReview {
   const homeCode = home?.code ?? fixture.home_team_id.toUpperCase()
   const awayCode = away?.code ?? fixture.away_team_id.toUpperCase()
@@ -180,7 +183,8 @@ export function generateMatchReview({
     : null
 
   const overridden = locked.pick_source === 'custom'
-  const overrideReason = locked.override_reason ?? null
+  // Prefer structured override_reason; fall back to human prediction comment
+  const overrideReason = locked.override_reason ?? humanPred?.comment ?? null
 
   const verdict  = deriveVerdict(overridden, myPts, enginePts)
   const evidence = buildEvidence(homeCode, awayCode, homeAdj, awayAdj, homeQual, awayQual)
@@ -229,13 +233,15 @@ export function generateAllReviews(params: {
   results: ActualResult[]
   adjustments: TeamAdjustment[]
   qualMap: Record<string, QualificationStatus>
+  humanPredictions?: HumanPrediction[]
 }): MatchReview[] {
-  const { fixtures, teams, lockedPredictions, poolRecommendations, results, adjustments, qualMap } = params
-  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
+  const { fixtures, teams, lockedPredictions, poolRecommendations, results, adjustments, qualMap, humanPredictions = [] } = params
+  const teamMap   = Object.fromEntries(teams.map(t => [t.id, t]))
   const resultMap = Object.fromEntries(results.map(r => [r.fixture_id, r]))
   const recMap    = Object.fromEntries(poolRecommendations.map(r => [r.fixture_id, r]))
   const adjMap    = Object.fromEntries(adjustments.map(a => [a.teamId, a]))
   const lockedMap = Object.fromEntries(lockedPredictions.map(p => [p.fixture_id, p]))
+  const humanMap  = Object.fromEntries(humanPredictions.map(h => [h.fixture_id, h]))
 
   const reviews: MatchReview[] = []
   for (const fixture of fixtures) {
@@ -255,6 +261,7 @@ export function generateAllReviews(params: {
       awayAdj: adjMap[fixture.away_team_id],
       homeQual: qualMap[fixture.home_team_id] ?? 'alive',
       awayQual: qualMap[fixture.away_team_id] ?? 'alive',
+      humanPred: humanMap[fixture.id],
     }))
   }
   return reviews

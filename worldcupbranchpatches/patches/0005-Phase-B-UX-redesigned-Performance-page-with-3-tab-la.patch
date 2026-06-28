@@ -1,0 +1,1073 @@
+From 0db6a7a999a74cb22adc410345c876e2587ffedb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 28 Jun 2026 17:51:15 +0000
+Subject: [PATCH 5/6] Phase B UX: redesigned Performance page with 3-tab layout
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replaces the 6-tab layout with a coherent 3-tab structure that tells
+a complete story: how did I perform, why, and what to do next.
+
+Key Insights for Your Next Picks (always-visible card above tabs):
+- Active learning signals with High/Medium/Low Impact badges
+- Estimated pool point improvement per signal
+- Upcoming must-win/must-not-lose team alerts with recommendations
+
+Review tab (primary):
+- Hero strip: Pool Points · Exact % · Outperformed Engine % · Override ROI
+- Decision Review: expandable rows showing engine confidence, applied
+  learning, override reason, lesson learned, context factors per match
+- Override Intelligence: success rate bar, net delta, avg/override,
+  last-N trend (✓ ✗ streak), recommendation block
+- Exact Score Optimisation: visual bars, bias stats, profitable adjustment
+- Next Picks Checklist: dynamic items linking to fixture pages
+
+Learning tab:
+- Signal cards: narrative + compact badges (matches, avg Δpts, confidence)
+  each closing with a Recommendation block
+- Blind Spots: ranked by improvement opportunity with prominent +pts potential
+- Learning Timeline slot reserved for future phase
+
+Diagnostics tab: unchanged model internals, leaderboard, calibration
+
+Architecture:
+- Shared performance-data.ts computes everything once (reviews, signals,
+  qualMap, upcoming fixtures) — tabs receive typed PerformanceData props
+- Learning Timeline extensible: slot comment in tab-learning.tsx
+- All internal identifiers translated to human language
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RU92kjKaNM5o2ZXbwgeazK
+---
+ .../components/analysis/key-insights-card.tsx | 103 ++++++
+ .../analysis/next-picks-checklist.tsx         | 105 +++++++
+ .../components/analysis/performance-data.ts   | 100 ++++++
+ .../components/analysis/performance-panel.tsx |  45 ++-
+ .../analysis/tabs/tab-diagnostics.tsx         |  33 +-
+ .../components/analysis/tabs/tab-learning.tsx | 215 +++++++++++++
+ .../components/analysis/tabs/tab-review.tsx   | 292 ++++++++++++++++++
+ 7 files changed, 848 insertions(+), 45 deletions(-)
+ create mode 100644 worldcup-app/src/components/analysis/key-insights-card.tsx
+ create mode 100644 worldcup-app/src/components/analysis/next-picks-checklist.tsx
+ create mode 100644 worldcup-app/src/components/analysis/performance-data.ts
+ create mode 100644 worldcup-app/src/components/analysis/tabs/tab-learning.tsx
+ create mode 100644 worldcup-app/src/components/analysis/tabs/tab-review.tsx
+
+diff --git a/worldcup-app/src/components/analysis/key-insights-card.tsx b/worldcup-app/src/components/analysis/key-insights-card.tsx
+new file mode 100644
+index 0000000..5e580ea
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/key-insights-card.tsx
+@@ -0,0 +1,103 @@
++'use client'
++import type { PerformanceData } from './performance-data'
++import { BLIND_SPOT_LABELS, SIGNAL_RECOMMENDATIONS } from './performance-data'
++import { Lightbulb } from 'lucide-react'
++import { Badge } from '@/components/ui/badge'
++
++const IMPACT_STYLE: Record<string, string> = {
++  High:   'bg-red-50 text-red-700 border-red-200',
++  Medium: 'bg-amber-50 text-amber-700 border-amber-200',
++  Low:    'bg-zinc-50 text-zinc-600 border-zinc-200',
++}
++
++function strengthToImpact(strength: string): 'High' | 'Medium' | 'Low' {
++  if (strength === 'Strong')   return 'High'
++  if (strength === 'Moderate') return 'Medium'
++  return 'Low'
++}
++
++export function KeyInsightsCard({ data }: { data: PerformanceData }) {
++  const { activeSignals, upcoming } = data
++
++  const mustWinUpcoming = upcoming.filter(
++    u => u.homeQual === 'must_win' || u.awayQual === 'must_win' ||
++         u.homeQual === 'must_not_lose' || u.awayQual === 'must_not_lose',
++  )
++
++  const topSignal = activeSignals[0]
++  const estimatedGain = activeSignals.reduce((s, sig) => s + Math.max(0, sig.avgPtsImprovement), 0)
++
++  if (!topSignal && mustWinUpcoming.length === 0) {
++    return (
++      <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-4 py-3 flex items-start gap-3">
++        <Lightbulb className="h-4 w-4 text-zinc-400 mt-0.5 shrink-0" />
++        <div>
++          <p className="text-xs font-semibold text-zinc-700">Key Insights for Your Next Picks</p>
++          <p className="text-xs text-zinc-400 mt-0.5">No active learning signals yet. Complete more matches to unlock pattern-based guidance.</p>
++        </div>
++      </div>
++    )
++  }
++
++  return (
++    <div className="rounded-lg border border-blue-100 bg-blue-50/40 px-4 py-3 space-y-3">
++      <div className="flex items-center justify-between">
++        <div className="flex items-center gap-2">
++          <Lightbulb className="h-4 w-4 text-blue-600 shrink-0" />
++          <p className="text-xs font-semibold text-zinc-900">Key Insights for Your Next Picks</p>
++        </div>
++        {estimatedGain > 0 && (
++          <span className="text-[10px] text-green-700 font-semibold bg-green-50 border border-green-200 rounded px-1.5 py-0.5">
++            +{estimatedGain.toFixed(1)} expected pts
++          </span>
++        )}
++      </div>
++
++      <div className="space-y-2.5">
++        {activeSignals.map(sig => {
++          const impact = strengthToImpact(sig.strength)
++          const rec = SIGNAL_RECOMMENDATIONS[sig.category]
++          return (
++            <div key={sig.id} className="space-y-1">
++              <div className="flex items-center gap-2">
++                <Badge variant="outline" className={`text-[10px] ${IMPACT_STYLE[impact]}`}>
++                  {impact} Impact
++                </Badge>
++                <span className="text-xs font-medium text-zinc-800">
++                  {BLIND_SPOT_LABELS[sig.category] ?? sig.category}
++                </span>
++                <span className="text-[10px] text-zinc-400">{sig.occurrences} matches · {sig.confidence} confidence</span>
++                {sig.avgPtsImprovement > 0 && (
++                  <span className="text-[10px] text-green-600 font-medium ml-auto">
++                    +{sig.avgPtsImprovement.toFixed(1)} pts/match
++                  </span>
++                )}
++              </div>
++              {rec && <p className="text-xs text-zinc-600 pl-1">{rec}</p>}
++            </div>
++          )
++        })}
++
++        {mustWinUpcoming.length > 0 && (
++          <div className="space-y-1 border-t border-blue-100 pt-2">
++            <div className="flex items-center gap-2">
++              <Badge variant="outline" className="text-[10px] bg-orange-50 text-orange-700 border-orange-200">
++                Medium Impact
++              </Badge>
++              <span className="text-xs font-medium text-zinc-800">Qualification pressure in upcoming fixtures</span>
++            </div>
++            <p className="text-xs text-zinc-600 pl-1">
++              These teams need a result:{' '}
++              {mustWinUpcoming.flatMap(u => {
++                const names: string[] = []
++                if (u.homeQual === 'must_win' || u.homeQual === 'must_not_lose') names.push(u.home?.code ?? '')
++                if (u.awayQual === 'must_win' || u.awayQual === 'must_not_lose') names.push(u.away?.code ?? '')
++                return names
++              }).filter(Boolean).join(' · ')}
++            </p>
++          </div>
++        )}
++      </div>
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/next-picks-checklist.tsx b/worldcup-app/src/components/analysis/next-picks-checklist.tsx
+new file mode 100644
+index 0000000..709c058
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/next-picks-checklist.tsx
+@@ -0,0 +1,105 @@
++'use client'
++import Link from 'next/link'
++import type { PerformanceData } from './performance-data'
++import { BLIND_SPOT_LABELS } from './performance-data'
++import { CheckSquare } from 'lucide-react'
++
++export function NextPicksChecklist({ data }: { data: PerformanceData }) {
++  const { activeSignals, upcoming } = data
++
++  const mustWinUpcoming = upcoming.filter(
++    u => u.homeQual === 'must_win' || u.awayQual === 'must_win' ||
++         u.homeQual === 'must_not_lose' || u.awayQual === 'must_not_lose',
++  )
++  const rotationUpcoming = upcoming.filter(
++    u => u.homeQual === 'rotation_risk' || u.awayQual === 'rotation_risk',
++  )
++
++  const estimatedGain = activeSignals.reduce((s, sig) => s + Math.max(0, sig.avgPtsImprovement), 0)
++
++  type CheckItem = {
++    label: string
++    detail?: string
++    fixtures?: Array<{ id: string; code: string }>
++  }
++
++  const items: CheckItem[] = []
++
++  if (mustWinUpcoming.length > 0) {
++    const teams = mustWinUpcoming.flatMap(u => {
++      const out: Array<{ id: string; code: string }> = []
++      if (u.homeQual === 'must_win' || u.homeQual === 'must_not_lose')
++        out.push({ id: u.fixture.id, code: u.home?.code ?? u.fixture.home_team_id })
++      if (u.awayQual === 'must_win' || u.awayQual === 'must_not_lose')
++        out.push({ id: u.fixture.id, code: u.away?.code ?? u.fixture.away_team_id })
++      return out
++    })
++    items.push({ label: 'Review must-win teams', fixtures: teams })
++  }
++
++  if (rotationUpcoming.length > 0) {
++    const teams = rotationUpcoming.flatMap(u => {
++      const out: Array<{ id: string; code: string }> = []
++      if (u.homeQual === 'rotation_risk') out.push({ id: u.fixture.id, code: u.home?.code ?? u.fixture.home_team_id })
++      if (u.awayQual === 'rotation_risk') out.push({ id: u.fixture.id, code: u.away?.code ?? u.fixture.away_team_id })
++      return out
++    })
++    items.push({ label: 'Check rotation-risk teams', detail: 'Squad rotation may affect predicted scorelines', fixtures: teams })
++  }
++
++  items.push({ label: 'Verify confirmed lineups before locking', detail: 'Absences can shift goal expectations significantly' })
++
++  for (const sig of activeSignals) {
++    items.push({
++      label: `Apply active learning: ${BLIND_SPOT_LABELS[sig.category] ?? sig.category}`,
++      detail: `${sig.occurrences} matches observed · ${sig.confidence} confidence`,
++    })
++  }
++
++  if (items.length === 0) {
++    items.push({ label: 'No active signals — trust the engine recommendations' })
++  }
++
++  return (
++    <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-4 py-4 space-y-3">
++      <div className="flex items-center justify-between">
++        <div className="flex items-center gap-2">
++          <CheckSquare className="h-4 w-4 text-zinc-500" />
++          <p className="text-xs font-semibold text-zinc-800">Next Picks Checklist</p>
++        </div>
++        {estimatedGain > 0 && (
++          <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">
++            +{estimatedGain.toFixed(1)} estimated opportunity
++          </span>
++        )}
++      </div>
++
++      <ul className="space-y-2">
++        {items.map((item, i) => (
++          <li key={i} className="flex flex-col gap-0.5">
++            <div className="flex items-start gap-2">
++              <span className="text-green-600 text-xs mt-px shrink-0">✓</span>
++              <div className="space-y-0.5">
++                <p className="text-xs font-medium text-zinc-800">{item.label}</p>
++                {item.detail && <p className="text-[10px] text-zinc-500">{item.detail}</p>}
++                {item.fixtures && item.fixtures.length > 0 && (
++                  <div className="flex flex-wrap gap-1.5 mt-1">
++                    {item.fixtures.map(f => (
++                      <Link
++                        key={f.id}
++                        href={`/matches/${f.id}`}
++                        className="inline-flex items-center rounded bg-white border border-zinc-200 px-2 py-0.5 text-[10px] font-medium text-zinc-700 hover:border-zinc-400 hover:text-zinc-900 transition-colors"
++                      >
++                        {f.code} →
++                      </Link>
++                    ))}
++                  </div>
++                )}
++              </div>
++            </div>
++          </li>
++        ))}
++      </ul>
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/performance-data.ts b/worldcup-app/src/components/analysis/performance-data.ts
+new file mode 100644
+index 0000000..bc263a0
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/performance-data.ts
+@@ -0,0 +1,100 @@
++// Shared data computation for the Performance page.
++// All functions are synchronous localStorage reads — safe to call in render.
++
++import { getFixtures, getTeams, getResults, getLockedPredictions, getPoolRecommendations, getHumanPredictions, getPredictions, computeCalibration } from '@/lib/store'
++import { generateAllReviews, poolScore, type MatchReview } from '@/lib/match-review'
++import { generateLearningSignals, type LearningSignal } from '@/lib/learning-signals'
++import { buildBlindSpotProfile, type BlindSpotProfile } from '@/lib/failure-classifier'
++import { buildExactScoreProfile, type ExactScoreProfile } from '@/lib/exact-score-analysis'
++import { buildTeamAdjustments } from '@/lib/learning-layer'
++import { computeGroupStandings, computeQualificationStatus, type QualificationStatus } from '@/lib/team-stats'
++import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
++import type { ModelCalibration } from '@/lib/store'
++
++export interface UpcomingFixture {
++  fixture: SeedFixture
++  home: SeedTeam | undefined
++  away: SeedTeam | undefined
++  homeQual: QualificationStatus
++  awayQual: QualificationStatus
++}
++
++export interface PerformanceData {
++  reviews: MatchReview[]
++  signals: LearningSignal[]
++  activeSignals: LearningSignal[]
++  blindSpotProfile: BlindSpotProfile[]
++  exactScore: ExactScoreProfile
++  qualMap: Record<string, QualificationStatus>
++  teams: SeedTeam[]
++  fixtures: SeedFixture[]
++  calibration: ModelCalibration[]
++  upcoming: UpcomingFixture[]
++}
++
++export function computePerformanceData(): PerformanceData {
++  const fixtures = getFixtures()
++  const teams = getTeams()
++  const results = getResults()
++  const locked = getLockedPredictions()
++  const recs = getPoolRecommendations()
++  const human = getHumanPredictions()
++  const preds = getPredictions()
++  const calibration = computeCalibration()
++
++  const adjustments = buildTeamAdjustments(teams, fixtures, results, preds)
++  const standings = computeGroupStandings(fixtures, results)
++
++  const qualMap: Record<string, QualificationStatus> = {}
++  for (const ts of Object.values(standings)) {
++    for (const s of ts) qualMap[s.teamId] = computeQualificationStatus(s.teamId, ts, s.played)
++  }
++
++  const reviews = generateAllReviews({
++    fixtures, teams, lockedPredictions: locked,
++    poolRecommendations: recs, results, adjustments, qualMap, humanPredictions: human,
++  })
++
++  const signals = generateLearningSignals(reviews)
++  const activeSignals = signals.filter(s => s.appliedToRecs)
++  const blindSpotProfile = buildBlindSpotProfile(reviews.map(r => ({ category: r.blindSpot })))
++  const exactScore = buildExactScoreProfile(reviews)
++
++  const resultedIds = new Set(results.map(r => r.fixture_id))
++  const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
++  const upcoming: UpcomingFixture[] = fixtures
++    .filter(f => !resultedIds.has(f.id))
++    .sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
++    .map(f => ({
++      fixture: f,
++      home: teamMap[f.home_team_id],
++      away: teamMap[f.away_team_id],
++      homeQual: qualMap[f.home_team_id] ?? 'unknown',
++      awayQual: qualMap[f.away_team_id] ?? 'unknown',
++    }))
++
++  return { reviews, signals, activeSignals, blindSpotProfile, exactScore, qualMap, teams, fixtures, calibration, upcoming }
++}
++
++export { poolScore }
++
++export const BLIND_SPOT_LABELS: Record<string, string> = {
++  over_predicted_goals:           'Over-predicted goals',
++  favourite_overestimated:        'Favourite overestimated',
++  qualification_pressure_ignored: 'Qualification pressure',
++  away_attack_underestimated:     'Away attack underestimated',
++  home_attack_underestimated:     'Home attack underestimated',
++  defensive_improvement_ignored:  'Defensive improvement',
++  random_variance:                'Unexplained results',
++  correct:                        'Correct',
++}
++
++export const SIGNAL_RECOMMENDATIONS: Record<string, string> = {
++  over_predicted_goals:           'When the engine predicts 3+ total goals, consider whether the 2-goal version of the same result is more credible. Trust lower scorelines.',
++  favourite_overestimated:        'Check if underdog teams have motivation factors (must-win, home advantage, recent form) before accepting a heavy favourite prediction.',
++  qualification_pressure_ignored: 'Before locking picks involving must-win or must-not-lose teams, consider a more competitive scoreline than the engine predicts.',
++  away_attack_underestimated:     'Give extra credit to away teams with strong attack factors — the engine may undervalue their scoring threat.',
++  home_attack_underestimated:     'Give extra credit to home teams with strong attack factors — the engine may undervalue their scoring threat.',
++  defensive_improvement_ignored:  'When a team has shown recent defensive improvement, consider lower-scoring outcomes than the engine predicts.',
++  random_variance:                'No consistent pattern yet — continue accumulating match data.',
++}
+diff --git a/worldcup-app/src/components/analysis/performance-panel.tsx b/worldcup-app/src/components/analysis/performance-panel.tsx
+index 41d38ea..b315366 100644
+--- a/worldcup-app/src/components/analysis/performance-panel.tsx
++++ b/worldcup-app/src/components/analysis/performance-panel.tsx
+@@ -1,21 +1,16 @@
+ 'use client'
+-import { useState, useEffect } from 'react'
++import { useState, useEffect, useMemo } from 'react'
+ import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
+-import { TabDecisionReview } from './tabs/tab-decision-review'
+-import { TabOverrideIntelligence } from './tabs/tab-override-intelligence'
+-import { TabEngineLearning } from './tabs/tab-engine-learning'
+-import { TabBlindSpots } from './tabs/tab-blind-spots'
+-import { TabExactScore } from './tabs/tab-exact-score'
++import { KeyInsightsCard } from './key-insights-card'
++import { TabReview } from './tabs/tab-review'
++import { TabLearning } from './tabs/tab-learning'
+ import { TabDiagnostics } from './tabs/tab-diagnostics'
+-import { UpcomingAssistant } from './upcoming-assistant'
++import { computePerformanceData } from './performance-data'
+ 
+ const TABS = [
+-  { id: 'review',     label: 'Decision Review' },
+-  { id: 'overrides',  label: 'Override Intelligence' },
+-  { id: 'learning',   label: 'Engine Learning' },
+-  { id: 'blindspots', label: 'Blind Spots' },
+-  { id: 'exactscore', label: 'Exact Score' },
+-  { id: 'diagnostics',label: 'Diagnostics' },
++  { id: 'review',      label: 'Review' },
++  { id: 'learning',    label: 'Learning' },
++  { id: 'diagnostics', label: 'Diagnostics' },
+ ] as const
+ 
+ type TabId = typeof TABS[number]['id']
+@@ -26,24 +21,29 @@ export function PerformancePanel() {
+ 
+   useEffect(() => setMounted(true), [])
+ 
+-  if (!mounted) return <div className="h-64 animate-pulse rounded-lg bg-zinc-100" />
++  const data = useMemo(() => {
++    if (!mounted) return null
++    return computePerformanceData()
++  }, [mounted])
++
++  if (!mounted || !data) return <div className="h-64 animate-pulse rounded-lg bg-zinc-100" />
+ 
+   return (
+     <div className="space-y-4">
+       <SyncErrorBanner />
+ 
+-      {/* Upcoming risk review always visible at top */}
+-      <UpcomingAssistant />
++      {/* Always-visible insights card */}
++      <KeyInsightsCard data={data} />
+ 
+       {/* Tab bar */}
+       <div className="border-b border-zinc-200">
+-        <nav className="-mb-px flex gap-0 overflow-x-auto">
++        <nav className="-mb-px flex gap-0">
+           {TABS.map(t => (
+             <button
+               key={t.id}
+               onClick={() => setTab(t.id)}
+               className={[
+-                'whitespace-nowrap px-4 py-2.5 text-xs font-medium border-b-2 transition-colors',
++                'px-5 py-2.5 text-sm font-medium border-b-2 transition-colors',
+                 tab === t.id
+                   ? 'border-zinc-900 text-zinc-900'
+                   : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300',
+@@ -57,12 +57,9 @@ export function PerformancePanel() {
+ 
+       {/* Tab content */}
+       <div className="min-h-[200px]">
+-        {tab === 'review'      && <TabDecisionReview />}
+-        {tab === 'overrides'   && <TabOverrideIntelligence />}
+-        {tab === 'learning'    && <TabEngineLearning />}
+-        {tab === 'blindspots'  && <TabBlindSpots />}
+-        {tab === 'exactscore'  && <TabExactScore />}
+-        {tab === 'diagnostics' && <TabDiagnostics />}
++        {tab === 'review'      && <TabReview data={data} />}
++        {tab === 'learning'    && <TabLearning data={data} />}
++        {tab === 'diagnostics' && <TabDiagnostics data={data} />}
+       </div>
+     </div>
+   )
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-diagnostics.tsx b/worldcup-app/src/components/analysis/tabs/tab-diagnostics.tsx
+index 8a1ae20..55b6728 100644
+--- a/worldcup-app/src/components/analysis/tabs/tab-diagnostics.tsx
++++ b/worldcup-app/src/components/analysis/tabs/tab-diagnostics.tsx
+@@ -1,23 +1,24 @@
+ 'use client'
++import type { PerformanceData } from '../performance-data'
+ import { ModelHealth } from '@/components/analysis/model-health'
+ import { DisagreementAnalysis } from '@/components/analysis/disagreement-analysis'
+ import { DecisionEngine } from '@/components/analysis/decision-engine'
+-import { useMemo } from 'react'
+-import { getFixtures, getTeams, getResults, computeCalibration } from '@/lib/store'
+-import { getLockedPredictions, getPredictions } from '@/lib/store'
++import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions } from '@/lib/store'
+ import { getOutcome } from '@/lib/models'
+ import { MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
++import { useMemo } from 'react'
+ 
+ const MODELS = ['A', 'B', 'C'] as const
+ 
+-export function TabDiagnostics() {
+-  const { leaderboard, calibration, comparisons } = useMemo(() => {
++export function TabDiagnostics({ data }: { data: PerformanceData }) {
++  const { calibration } = data
++
++  const leaderboard = useMemo(() => {
+     const fixtures = getFixtures()
+     const teams = getTeams()
+     const results = getResults()
+     const allPreds = getPredictions()
+     const lockedPreds = getLockedPredictions()
+-    const calibration = computeCalibration()
+     const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
+ 
+     const comparisons = results.flatMap(result => {
+@@ -39,17 +40,10 @@ export function TabDiagnostics() {
+         }]
+       }))
+ 
+-      return [{
+-        fixtureId: fixture.id,
+-        homeCode: home.code, awayCode: away.code,
+-        date: fixture.kickoff_utc, group: fixture.group ?? '',
+-        lockedModel: locked?.model ?? null,
+-        actual: { home: result.home_goals, away: result.away_goals },
+-        models,
+-      }]
+-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
++      return [{ fixtureId: fixture.id, lockedModel: locked?.model ?? null, models }]
++    })
+ 
+-    const leaderboard = MODELS.map(m => {
++    return MODELS.map(m => {
+       const entries = comparisons.map(c => c.models[m]).filter(Boolean)
+       const correct = entries.filter(e => e!.outcomeCorrect).length
+       return {
+@@ -60,8 +54,6 @@ export function TabDiagnostics() {
+         avgGoalErr: entries.length > 0 ? entries.reduce((s, e) => s + e!.goalErr, 0) / entries.length : 0,
+       }
+     }).sort((a, b) => b.accuracy - a.accuracy || a.avgGoalErr - b.avgGoalErr)
+-
+-    return { leaderboard, calibration, comparisons }
+   }, [])
+ 
+   const bestModel = leaderboard[0]?.accuracy > 0 ? leaderboard[0].model : null
+@@ -72,7 +64,6 @@ export function TabDiagnostics() {
+       <ModelHealth />
+       <DisagreementAnalysis />
+ 
+-      {/* Model leaderboard */}
+       <div className="space-y-2">
+         <p className="text-sm font-semibold text-zinc-700">Model Leaderboard</p>
+         <p className="text-xs text-zinc-400">Outcome accuracy and goal error across all played matches.</p>
+@@ -123,8 +114,8 @@ export function TabDiagnostics() {
+           </table>
+         </div>
+         {bestModel && (
+-          <p className="text-xs text-zinc-500 px-1">
+-            Best performer: {MODEL_LABELS[bestModel]} — leading on accuracy across {comparisons.length} played matches.
++          <p className="text-xs text-zinc-500">
++            Best performer: {MODEL_LABELS[bestModel]} — leading on accuracy across {leaderboard[0].matches} played matches.
+           </p>
+         )}
+       </div>
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-learning.tsx b/worldcup-app/src/components/analysis/tabs/tab-learning.tsx
+new file mode 100644
+index 0000000..9115d55
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/tabs/tab-learning.tsx
+@@ -0,0 +1,215 @@
++'use client'
++import type { PerformanceData } from '../performance-data'
++import { BLIND_SPOT_LABELS, SIGNAL_RECOMMENDATIONS } from '../performance-data'
++import { Brain, Eye } from 'lucide-react'
++import { Badge } from '@/components/ui/badge'
++import type { LearningSignal } from '@/lib/learning-signals'
++
++// ── Label maps ────────────────────────────────────────────────────────────────
++
++const STRENGTH_STYLE: Record<string, string> = {
++  Strong:   'bg-green-100 text-green-800 border-green-200',
++  Moderate: 'bg-amber-100 text-amber-800 border-amber-200',
++  Weak:     'bg-zinc-100 text-zinc-600 border-zinc-200',
++}
++
++const BAR_COLOR: Record<string, string> = {
++  over_predicted_goals:           'bg-amber-400',
++  favourite_overestimated:        'bg-red-400',
++  qualification_pressure_ignored: 'bg-orange-400',
++  away_attack_underestimated:     'bg-purple-400',
++  home_attack_underestimated:     'bg-indigo-400',
++  defensive_improvement_ignored:  'bg-blue-400',
++  random_variance:                'bg-zinc-300',
++  correct:                        'bg-green-400',
++}
++
++// ── Signal card ───────────────────────────────────────────────────────────────
++
++function SignalCard({ sig }: { sig: LearningSignal }) {
++  const rec = SIGNAL_RECOMMENDATIONS[sig.category]
++  return (
++    <div className="rounded-lg border border-zinc-100 bg-white px-4 py-3 space-y-2.5 shadow-sm">
++      <div className="flex items-start justify-between gap-2">
++        <p className="text-xs font-semibold text-zinc-900 leading-snug">{sig.lesson}</p>
++        <Badge variant="outline" className={`text-[10px] shrink-0 ${STRENGTH_STYLE[sig.strength] ?? ''}`}>
++          {sig.strength}
++        </Badge>
++      </div>
++
++      <div className="flex flex-wrap gap-3">
++        <div className="rounded bg-zinc-50 border border-zinc-100 px-2 py-1 text-center">
++          <p className="text-[10px] text-zinc-400">Matches</p>
++          <p className="text-sm font-bold text-zinc-900">{sig.occurrences}</p>
++        </div>
++        <div className="rounded bg-zinc-50 border border-zinc-100 px-2 py-1 text-center">
++          <p className="text-[10px] text-zinc-400">Avg Δ pts</p>
++          <p className={`text-sm font-bold ${sig.avgPtsImprovement > 0 ? 'text-green-700' : 'text-red-600'}`}>
++            {sig.avgPtsImprovement >= 0 ? '+' : ''}{sig.avgPtsImprovement.toFixed(2)}
++          </p>
++        </div>
++        <div className="rounded bg-zinc-50 border border-zinc-100 px-2 py-1 text-center">
++          <p className="text-[10px] text-zinc-400">Confidence</p>
++          <p className="text-sm font-bold text-zinc-700">{sig.confidence}</p>
++        </div>
++        <div className="rounded bg-zinc-50 border border-zinc-100 px-2 py-1 text-center">
++          <p className="text-[10px] text-zinc-400">Status</p>
++          <p className={`text-sm font-bold ${sig.appliedToRecs ? 'text-green-700' : 'text-zinc-500'}`}>
++            {sig.appliedToRecs ? 'Active' : 'Monitoring'}
++          </p>
++        </div>
++      </div>
++
++      {rec && (
++        <div className="border-t border-zinc-100 pt-2">
++          <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 mb-0.5">Recommendation</p>
++          <p className="text-xs text-zinc-700">{rec}</p>
++        </div>
++      )}
++    </div>
++  )
++}
++
++// ── Engine Learning section ───────────────────────────────────────────────────
++
++function EngineLearningSection({ data }: { data: PerformanceData }) {
++  const { signals } = data
++  const active   = signals.filter(s => s.appliedToRecs)
++  const watching = signals.filter(s => !s.appliedToRecs)
++
++  if (signals.length === 0) {
++    return (
++      <div className="space-y-2">
++        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Engine Learning</p>
++        <div className="rounded-lg bg-zinc-50 px-4 py-8 text-center">
++          <Brain className="mx-auto mb-3 h-7 w-7 text-zinc-300" />
++          <p className="text-sm text-zinc-500">Not enough data yet.</p>
++          <p className="mt-1 text-xs text-zinc-400">Signals appear after 3+ matches show the same failure pattern.</p>
++        </div>
++      </div>
++    )
++  }
++
++  return (
++    <div className="space-y-4">
++      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Engine Learning</p>
++
++      {active.length > 0 && (
++        <div className="space-y-2.5">
++          <p className="text-xs text-zinc-500">Active signals — applied to recommendations ({active.length})</p>
++          {active.map(sig => <SignalCard key={sig.id} sig={sig} />)}
++        </div>
++      )}
++
++      {watching.length > 0 && (
++        <div className="space-y-2">
++          <p className="text-xs text-zinc-500">Monitoring — building evidence</p>
++          {watching.map(sig => (
++            <div key={sig.id} className="flex items-center justify-between rounded bg-zinc-50 border border-zinc-100 px-3 py-2 text-xs">
++              <span className="text-zinc-700">{BLIND_SPOT_LABELS[sig.category] ?? sig.category}</span>
++              <div className="flex items-center gap-3 text-zinc-400">
++                <span>{sig.occurrences} occurrence{sig.occurrences !== 1 ? 's' : ''}</span>
++                <Badge variant="outline" className={`text-[10px] ${STRENGTH_STYLE[sig.strength]}`}>{sig.strength}</Badge>
++              </div>
++            </div>
++          ))}
++        </div>
++      )}
++    </div>
++  )
++}
++
++// ── Blind Spots section ───────────────────────────────────────────────────────
++
++function BlindSpotsSection({ data }: { data: PerformanceData }) {
++  const { blindSpotProfile, reviews } = data
++  const total = reviews.length
++
++  if (total === 0) return null
++
++  const failures = blindSpotProfile.filter(p => p.category !== 'correct')
++  const correctEntry = blindSpotProfile.find(p => p.category === 'correct')
++
++  // Sort by potential gain (count × estimated avg impact)
++  const ranked = [...failures].sort((a, b) => b.count - a.count)
++
++  // Avg impact is not stored in profile — estimate from count/total
++  const AVG_IMPACT_ESTIMATES: Record<string, number> = {
++    qualification_pressure_ignored: 1.5,
++    over_predicted_goals:           1.2,
++    favourite_overestimated:        0.9,
++    defensive_improvement_ignored:  1.0,
++    away_attack_underestimated:     1.1,
++    home_attack_underestimated:     1.1,
++    random_variance:                0.0,
++  }
++
++  return (
++    <div className="space-y-4">
++      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Engine Blind Spots</p>
++
++      <div className="grid grid-cols-2 gap-3">
++        <div className="rounded-lg bg-green-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Engine correct</p>
++          <p className="text-2xl font-black text-green-700">{correctEntry?.count ?? 0}</p>
++          <p className="text-xs text-zinc-400">{correctEntry?.pct ?? 0}% of matches</p>
++        </div>
++        <div className="rounded-lg bg-red-50 p-3 text-center">
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">Missed</p>
++          <p className="text-2xl font-black text-red-600">{total - (correctEntry?.count ?? 0)}</p>
++          <p className="text-xs text-zinc-400">{failures.length} pattern{failures.length !== 1 ? 's' : ''}</p>
++        </div>
++      </div>
++
++      {ranked.length > 0 && (
++        <div className="space-y-3">
++          <p className="text-xs text-zinc-500">Ranked by improvement opportunity</p>
++          {ranked.map((p, i) => {
++            const impact = AVG_IMPACT_ESTIMATES[p.category] ?? 0.8
++            const gain = (p.count * impact).toFixed(1)
++            return (
++              <div key={p.category} className="space-y-1.5">
++                <div className="flex items-center justify-between">
++                  <div className="flex items-center gap-2">
++                    <span className="text-[10px] font-bold text-zinc-400 w-4">{i + 1}</span>
++                    <span className="text-xs font-medium text-zinc-800">{BLIND_SPOT_LABELS[p.category] ?? p.category}</span>
++                  </div>
++                  <div className="flex items-center gap-3">
++                    <span className="text-xs text-zinc-500">{p.count} ({p.pct}%)</span>
++                    {impact > 0 && (
++                      <span className="text-xs font-bold text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">
++                        +{gain} pts potential
++                      </span>
++                    )}
++                  </div>
++                </div>
++                <div className="h-2 rounded-full bg-zinc-100 overflow-hidden">
++                  <div className={`h-full rounded-full ${BAR_COLOR[p.category] ?? 'bg-zinc-400'}`} style={{ width: `${p.pct}%` }} />
++                </div>
++              </div>
++            )
++          })}
++          <p className="text-[10px] text-zinc-400">Potential gain = estimated avg impact × occurrences.</p>
++        </div>
++      )}
++
++      {ranked.length === 0 && (
++        <div className="rounded-lg bg-green-50 px-4 py-4 text-center text-sm text-green-700">
++          No failure patterns detected — all classified matches were correct.
++        </div>
++      )}
++    </div>
++  )
++}
++
++// ── Tab export ─────────────────────────────────────────────────────────────────
++
++export function TabLearning({ data }: { data: PerformanceData }) {
++  return (
++    <div className="space-y-8">
++      <EngineLearningSection data={data} />
++      <BlindSpotsSection data={data} />
++      {/* Learning Timeline slot — add <LearningTimeline data={data} /> here in a future phase */}
++    </div>
++  )
++}
+diff --git a/worldcup-app/src/components/analysis/tabs/tab-review.tsx b/worldcup-app/src/components/analysis/tabs/tab-review.tsx
+new file mode 100644
+index 0000000..abd577d
+--- /dev/null
++++ b/worldcup-app/src/components/analysis/tabs/tab-review.tsx
+@@ -0,0 +1,292 @@
++'use client'
++import { useState } from 'react'
++import { ChevronDown, ChevronRight } from 'lucide-react'
++import Link from 'next/link'
++import type { PerformanceData } from '../performance-data'
++import { BLIND_SPOT_LABELS, poolScore } from '../performance-data'
++import { NextPicksChecklist } from '../next-picks-checklist'
++import { Badge } from '@/components/ui/badge'
++import type { MatchReview } from '@/lib/match-review'
++
++// ── Hero strip ────────────────────────────────────────────────────────────────
++
++function HeroStrip({ reviews }: { reviews: MatchReview[] }) {
++  const myTotal  = reviews.reduce((s, r) => s + r.myPts, 0)
++  const engTotal = reviews.reduce((s, r) => s + (r.enginePts ?? 0), 0)
++  const exact    = reviews.filter(r => r.myPts === 4).length
++  const exactPct = reviews.length > 0 ? Math.round((exact / reviews.length) * 100) : 0
++  const outperformed = reviews.filter(r => r.myPts > (r.enginePts ?? 0)).length
++  const outPct   = reviews.length > 0 ? Math.round((outperformed / reviews.length) * 100) : 0
++  const overrides = reviews.filter(r => r.overridden)
++  const overrideDelta = overrides.reduce((s, r) => s + (r.deltaVsEngine ?? 0), 0)
++
++  return (
++    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
++      {[
++        { label: 'Pool Points',       value: myTotal,                      sub: `avg ${reviews.length > 0 ? (myTotal / reviews.length).toFixed(1) : '0'}/match` },
++        { label: 'Exact %',           value: `${exactPct}%`,               sub: `${exact} of ${reviews.length} picks` },
++        { label: 'Outperformed Engine', value: `${outPct}%`,               sub: `${outperformed} of ${reviews.length} matches`, highlight: outPct >= 50 },
++        { label: 'Override ROI',      value: overrideDelta >= 0 ? `+${overrideDelta}` : `${overrideDelta}`, sub: `across ${overrides.length} overrides`, positive: overrideDelta > 0, negative: overrideDelta < 0 },
++      ].map(m => (
++        <div key={m.label} className={`rounded-lg p-3 text-center ${m.highlight ? 'bg-blue-50' : m.positive ? 'bg-green-50' : m.negative ? 'bg-red-50' : 'bg-zinc-50'}`}>
++          <p className="text-[10px] uppercase tracking-wide text-zinc-400">{m.label}</p>
++          <p className={`text-2xl font-black tabular-nums ${m.positive ? 'text-green-700' : m.negative ? 'text-red-600' : m.highlight ? 'text-blue-700' : 'text-zinc-900'}`}>
++            {m.value}
++          </p>
++          <p className="text-[10px] text-zinc-400">{m.sub}</p>
++        </div>
++      ))}
++    </div>
++  )
++}
++
++// ── Expandable match row ───────────────────────────────────────────────────────
++
++const VERDICT_STYLE: Record<string, string> = {
++  'Override succeeded': 'text-green-700 border-green-300 bg-green-50',
++  'Override failed':    'text-red-600 border-red-300 bg-red-50',
++  'Both matched':       'text-blue-700 border-blue-300 bg-blue-50',
++  'Both missed':        'text-zinc-500 border-zinc-200',
++  'Accepted rec':       'text-zinc-600 border-zinc-200',
++  'No rec available':   'text-zinc-400 border-zinc-100',
++}
++
++function ExpandableRow({ r, activeCats }: { r: MatchReview; activeCats: Set<string> }) {
++  const [open, setOpen] = useState(false)
++  const appliedSignal = activeCats.has(r.blindSpot) ? BLIND_SPOT_LABELS[r.blindSpot] : null
++
++  return (
++    <>
++      <tr
++        className="border-b border-zinc-50 hover:bg-zinc-50/60 cursor-pointer"
++        onClick={() => setOpen(v => !v)}
++      >
++        <td className="px-3 py-2.5">
++          <div className="flex items-center gap-1.5">
++            {open ? <ChevronDown className="h-3 w-3 text-zinc-400 shrink-0" /> : <ChevronRight className="h-3 w-3 text-zinc-400 shrink-0" />}
++            <span className="font-medium text-zinc-900 whitespace-nowrap">{r.homeCode} v {r.awayCode}</span>
++          </div>
++        </td>
++        <td className="px-3 py-2.5 text-center font-mono text-zinc-400">{r.engineH != null ? `${r.engineH}–${r.engineA}` : '—'}</td>
++        <td className="px-3 py-2.5 text-center font-mono font-semibold text-blue-700">{r.myH}–{r.myA}</td>
++        <td className="px-3 py-2.5 text-center font-mono font-bold text-zinc-900">{r.actualH}–{r.actualA}</td>
++        <td className="px-3 py-2.5 text-center">
++          <span className={`font-bold ${r.myPts === 4 ? 'text-green-700' : r.myPts === 2 ? 'text-blue-600' : r.myPts === 1 ? 'text-amber-600' : 'text-red-500'}`}>
++            {r.myPts}
++          </span>
++        </td>
++        <td className="px-3 py-2.5 text-center">
++          <Badge variant="outline" className={`text-[10px] ${VERDICT_STYLE[r.verdict] ?? ''}`}>{r.verdict}</Badge>
++        </td>
++        <td className="px-3 py-2.5 text-center text-[10px]">
++          {appliedSignal
++            ? <span className="text-green-700 font-medium">{appliedSignal}</span>
++            : <span className="text-zinc-300">—</span>}
++        </td>
++      </tr>
++      {open && (
++        <tr className="border-b border-zinc-100 bg-zinc-50/40">
++          <td colSpan={7} className="px-6 py-3">
++            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-xs">
++              {r.overrideReason && (
++                <div>
++                  <p className="font-semibold text-zinc-500 mb-0.5">Override reason</p>
++                  <p className="text-zinc-700">{r.overrideReason}</p>
++                </div>
++              )}
++              {r.lesson && (
++                <div>
++                  <p className="font-semibold text-zinc-500 mb-0.5">Lesson learned</p>
++                  <p className="text-zinc-700">{r.lesson}</p>
++                </div>
++              )}
++              {r.blindSpot !== 'correct' && (
++                <div>
++                  <p className="font-semibold text-zinc-500 mb-0.5">Engine failure pattern</p>
++                  <p className="text-zinc-700">{BLIND_SPOT_LABELS[r.blindSpot] ?? r.blindSpot}</p>
++                </div>
++              )}
++              {r.evidence.length > 0 && (
++                <div className={r.overrideReason || r.lesson ? '' : 'sm:col-span-2'}>
++                  <p className="font-semibold text-zinc-500 mb-0.5">Context factors</p>
++                  <ul className="space-y-0.5">
++                    {r.evidence.map((e, i) => <li key={i} className="text-zinc-600">· {e}</li>)}
++                  </ul>
++                </div>
++              )}
++              {!r.overrideReason && !r.lesson && r.evidence.length === 0 && (
++                <p className="text-zinc-400">No additional context recorded.</p>
++              )}
++            </div>
++          </td>
++        </tr>
++      )}
++    </>
++  )
++}
++
++// ── Decision Review section ───────────────────────────────────────────────────
++
++function DecisionReviewSection({ reviews, activeCats }: { reviews: MatchReview[]; activeCats: Set<string> }) {
++  if (reviews.length === 0) return null
++  return (
++    <div className="space-y-2">
++      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Completed Match Reviews ({reviews.length})</p>
++      <div className="overflow-x-auto rounded-lg border border-zinc-100">
++        <table className="w-full text-xs">
++          <thead>
++            <tr className="border-b border-zinc-100 bg-zinc-50">
++              <th className="px-3 py-2 text-left font-medium text-zinc-500">Match</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Engine</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Mine</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Actual</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Pts</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Verdict</th>
++              <th className="px-3 py-2 text-center font-medium text-zinc-500">Learning Applied</th>
++            </tr>
++          </thead>
++          <tbody>
++            {reviews.map(r => <ExpandableRow key={r.fixtureId} r={r} activeCats={activeCats} />)}
++          </tbody>
++        </table>
++      </div>
++      <p className="text-[10px] text-zinc-400 pl-1">Click any row to expand details.</p>
++    </div>
++  )
++}
++
++// ── Override Intelligence section ─────────────────────────────────────────────
++
++function OverrideIntelligenceSection({ reviews }: { reviews: MatchReview[] }) {
++  const overrides = reviews.filter(r => r.overridden)
++  if (overrides.length === 0) return null
++
++  const wins     = overrides.filter(r => r.verdict === 'Override succeeded').length
++  const losses   = overrides.filter(r => r.verdict === 'Override failed').length
++  const netDelta = overrides.reduce((s, r) => s + (r.deltaVsEngine ?? 0), 0)
++  const avgGain  = overrides.length > 0 ? netDelta / overrides.length : 0
++  const winRate  = overrides.length > 0 ? (wins / overrides.length) * 100 : 0
++
++  const recent5 = overrides.slice(-5)
++
++  // Recommendation logic
++  const isPositive = winRate >= 50 && avgGain > 0
++  const rec = isPositive
++    ? `Continue overriding selectively. Your overrides are net-positive (+${avgGain.toFixed(1)} pts/override on average). Avoid overriding high-confidence engine picks unless you have strong contextual evidence.`
++    : `Override performance is currently negative (${avgGain.toFixed(1)} pts/override). Consider trusting the engine more, particularly on high-confidence predictions.`
++
++  return (
++    <div className="space-y-3">
++      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Override Intelligence</p>
++      <p className="text-xs font-semibold text-zinc-700">Should I continue overriding the engine?</p>
++
++      <div className="space-y-2">
++        <div className="flex items-center gap-3">
++          <span className="text-xs text-zinc-600 w-36 shrink-0">Success rate</span>
++          <div className="flex-1 h-2 rounded-full bg-zinc-100 overflow-hidden">
++            <div className={`h-full rounded-full ${winRate >= 50 ? 'bg-green-500' : 'bg-red-400'}`} style={{ width: `${winRate}%` }} />
++          </div>
++          <span className="text-xs font-semibold text-zinc-900 w-20 text-right">{Math.round(winRate)}% ({wins}/{overrides.length})</span>
++        </div>
++        <div className="flex justify-between text-xs text-zinc-600 px-0.5">
++          <span>Net pts gained <span className={`font-semibold ${netDelta >= 0 ? 'text-green-700' : 'text-red-600'}`}>{netDelta >= 0 ? '+' : ''}{netDelta}</span></span>
++          <span>Avg per override <span className={`font-semibold ${avgGain >= 0 ? 'text-green-700' : 'text-red-600'}`}>{avgGain >= 0 ? '+' : ''}{avgGain.toFixed(1)}</span></span>
++        </div>
++      </div>
++
++      {recent5.length > 0 && (
++        <div className="flex items-center gap-2">
++          <span className="text-[10px] text-zinc-400 shrink-0">Last {recent5.length}:</span>
++          <div className="flex gap-1">
++            {recent5.map((r, i) => (
++              <span key={i} className={`text-xs font-bold ${r.verdict === 'Override succeeded' ? 'text-green-600' : r.verdict === 'Override failed' ? 'text-red-500' : 'text-zinc-400'}`}>
++                {r.verdict === 'Override succeeded' ? '✓' : r.verdict === 'Override failed' ? '✗' : '·'}
++              </span>
++            ))}
++          </div>
++        </div>
++      )}
++
++      <div className="rounded-lg bg-zinc-50 border border-zinc-100 px-3 py-2.5">
++        <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 mb-1">Recommendation</p>
++        <p className="text-xs text-zinc-700">{rec}</p>
++      </div>
++    </div>
++  )
++}
++
++// ── Exact Score section ───────────────────────────────────────────────────────
++
++function ExactScoreSection({ data }: { data: PerformanceData }) {
++  const { exactScore: p, reviews } = data
++  if (reviews.length === 0) return null
++  const { distribution: d, avgPts, homeGoalBias, awayGoalBias, missedPatterns, topMissedPattern } = p
++
++  const bars = [
++    { count: d.exact,   label: '4 pts · Exact',        bar: 'bg-green-500' },
++    { count: d.gdWin,   label: '2 pts · Winner + GD',   bar: 'bg-blue-400' },
++    { count: d.winOnly, label: '1 pt  · Winner',         bar: 'bg-amber-400' },
++    { count: d.miss,    label: '0 pts · Missed',         bar: 'bg-red-400' },
++  ]
++
++  const rec = topMissedPattern
++    ? `Most profitable adjustment: ${topMissedPattern}. Applying this to past matches would have added ~${Math.round(missedPatterns[0]?.count ?? 0)} pool points.`
++    : 'No consistent scoring pattern identified yet. Continue accumulating matches.'
++
++  return (
++    <div className="space-y-3">
++      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Exact Score Optimisation</p>
++
++      <div className="space-y-2">
++        {bars.map(({ count, label, bar }) => (
++          <div key={label} className="flex items-center gap-3">
++            <span className="text-xs text-zinc-600 w-36 shrink-0">{label}</span>
++            <div className="flex-1 h-2 rounded-full bg-zinc-100 overflow-hidden">
++              <div className={`h-full rounded-full ${bar}`} style={{ width: d.total > 0 ? `${(count / d.total) * 100}%` : '0%' }} />
++            </div>
++            <span className="text-xs font-semibold text-zinc-700 w-16 text-right">
++              {count} <span className="font-normal text-zinc-400">({Math.round((count / d.total) * 100)}%)</span>
++            </span>
++          </div>
++        ))}
++      </div>
++
++      <div className="flex gap-6 text-xs text-zinc-600">
++        <span>Avg pts/match <span className={`font-bold ${avgPts >= 2 ? 'text-green-700' : avgPts >= 1 ? 'text-amber-600' : 'text-red-500'}`}>{avgPts.toFixed(2)}</span></span>
++        <span>Home bias <span className={`font-bold ${Math.abs(homeGoalBias) < 0.3 ? 'text-zinc-700' : 'text-amber-600'}`}>{homeGoalBias >= 0 ? '+' : ''}{homeGoalBias.toFixed(2)}</span></span>
++        <span>Away bias <span className={`font-bold ${Math.abs(awayGoalBias) < 0.3 ? 'text-zinc-700' : 'text-amber-600'}`}>{awayGoalBias >= 0 ? '+' : ''}{awayGoalBias.toFixed(2)}</span></span>
++      </div>
++
++      <div className="rounded-lg bg-zinc-50 border border-zinc-100 px-3 py-2.5">
++        <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 mb-1">Most Profitable Adjustment</p>
++        <p className="text-xs text-zinc-700">{rec}</p>
++      </div>
++    </div>
++  )
++}
++
++// ── Tab export ────────────────────────────────────────────────────────────────
++
++export function TabReview({ data }: { data: PerformanceData }) {
++  const { reviews, activeSignals } = data
++  const activeCats = new Set(activeSignals.map(s => s.category as string))
++
++  if (reviews.length === 0) {
++    return (
++      <div className="py-12 text-center">
++        <p className="text-sm text-zinc-500">No completed matches to review yet.</p>
++        <p className="mt-1 text-xs text-zinc-400">Lock a prediction, then enter the actual score on the Matches page.</p>
++      </div>
++    )
++  }
++
++  return (
++    <div className="space-y-6">
++      <HeroStrip reviews={reviews} />
++      <DecisionReviewSection reviews={reviews} activeCats={activeCats} />
++      <OverrideIntelligenceSection reviews={reviews} />
++      <ExactScoreSection data={data} />
++      <NextPicksChecklist data={data} />
++    </div>
++  )
++}
+-- 
+2.43.0
+

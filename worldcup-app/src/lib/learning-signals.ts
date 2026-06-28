@@ -41,12 +41,16 @@ function computeConfidence(occurrences: number): 'High' | 'Medium' | 'Low' {
 
 // ── Lesson strings ────────────────────────────────────────────────────────────
 
+// Categories that are never actionable — surfaced for information only
+const NON_ACTIONABLE = new Set<BlindSpotCategory>(['random_variance'])
+
 const LESSONS: Record<string, string> = {
   away_attack_underestimated:    'Away team attacks are consistently underestimated',
   home_attack_underestimated:    'Home team attacks are consistently underestimated',
   defensive_improvement_ignored: 'Defensive improvements are underweighted in predictions',
   qualification_pressure_ignored:'Must-win pressure boosts team performance beyond engine baseline',
   favourite_overestimated:       'Heavy favourites are over-predicted — upsets are more common than modelled',
+  over_predicted_goals:          'Engine consistently predicts more goals than materialise — trust lower scorelines',
   random_variance:               'Outcomes without identifiable signals — within normal variance',
 }
 
@@ -84,7 +88,8 @@ export function generateLearningSignals(reviews: MatchReview[]): LearningSignal[
       avgPtsImprovement: Math.round(avgPtsImprovement * 100) / 100,
       confidence,
       strength,
-      appliedToRecs: strength !== 'Weak',
+      // Never apply non-actionable categories or signals with net-negative impact
+      appliedToRecs: strength !== 'Weak' && !NON_ACTIONABLE.has(category) && avgPtsImprovement > 0,
     })
   }
 

@@ -11,6 +11,7 @@ export type BlindSpotCategory =
   | 'defensive_improvement_ignored'
   | 'qualification_pressure_ignored'
   | 'favourite_overestimated'
+  | 'over_predicted_goals'
   | 'random_variance'
   | 'correct'
 
@@ -27,6 +28,7 @@ const LABELS: Record<BlindSpotCategory, string> = {
   defensive_improvement_ignored: 'Defensive improvements ignored',
   qualification_pressure_ignored:'Qualification pressure ignored',
   favourite_overestimated:       'Favourite overestimated',
+  over_predicted_goals:          'Goals over-predicted',
   random_variance:               'Random variance',
   correct:                       'Correct prediction',
 }
@@ -68,10 +70,7 @@ export function classifyEngineFailure({
   const actualTotal = actualH + actualA
   if (
     predTotal - actualTotal >= 2 &&
-    (
-      (homeAdj && homeAdj.defenceFactor <= 0.88) ||
-      (awayAdj && awayAdj.defenceFactor <= 0.88)
-    )
+    ((homeAdj && homeAdj.defenceFactor <= 0.88) || (awayAdj && awayAdj.defenceFactor <= 0.88))
   ) {
     return 'defensive_improvement_ignored'
   }
@@ -95,6 +94,12 @@ export function classifyEngineFailure({
 
   if (recMargin >= 2 && recOutcome !== actualOutcome) {
     return 'favourite_overestimated'
+  }
+
+  // Engine predicted more goals than actually scored (systematic over-prediction).
+  // Threshold: total predicted goals exceed actual total by ≥1 with same winner.
+  if (predTotal - actualTotal >= 1 && recOutcome === actualOutcome) {
+    return 'over_predicted_goals'
   }
 
   return 'random_variance'
