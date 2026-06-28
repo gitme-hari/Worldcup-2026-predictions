@@ -143,3 +143,113 @@ export function getOutcome(homeGoals: number, awayGoals: number): 'H' | 'D' | 'A
   if (homeGoals === awayGoals) return 'D'
   return 'A'
 }
+
+// ── Engine-native score source ────────────────────────────────────────────────
+// Average of all 3 model predictions — decoupled from active_model setting.
+// User overrides still take priority when provided.
+export function engineScore(
+  predictions: Array<{ fixture_id: string; home_goals: number; away_goals: number }>,
+  fixtureId: string,
+): { home: number; away: number } | null {
+  const fp = predictions.filter(p => p.fixture_id === fixtureId)
+  if (fp.length === 0) return null
+  const home = Math.round(fp.reduce((s, p) => s + p.home_goals, 0) / fp.length)
+  const away = Math.round(fp.reduce((s, p) => s + p.away_goals, 0) / fp.length)
+  return { home, away }
+}
+
+// ── WC26 Qualification ────────────────────────────────────────────────────────
+
+export type QualificationStatus =
+  | 'confirmed'        // mathematically cannot be overtaken
+  | 'projected_top2'   // currently top 2, games remaining
+  | 'best_third'       // currently best third-place across all groups
+  | 'in_contention'    // 3rd/4th, still alive
+  | 'eliminated'       // cannot mathematically qualify
+
+// WC26: 12 groups × 4 teams, 3 group-stage matches each
+// Top 2 from each group qualify + 8 best third-place teams = 32 total
+const MATCHES_PER_TEAM = 3
+const POINTS_PER_WIN = 3
+
+export function computeQualificationStatus(
+  standings: Record<string, GroupStanding[]>,
+): Record<string, QualificationStatus> {
+  const status: Record<string, QualificationStatus> = {}
+
+  // Compute third-place teams for each group
+  const thirdPlace: GroupStanding[] = []
+  Object.values(standings).forEach(group => {
+    if (group[2]) thirdPlace.push(group[2])
+  })
+  // Best 8 third-place teams by points → GD → GF
+  const best8Third = [...thirdPlace]
+    .sort((a, b) => b.points - a.points || b.gd - a.gd || b.gf - a.gf)
+    .slice(0, 8)
+    .map(s => s.team.id)
+
+  Object.entries(standings).forEach(([, group]) => {
+    const teamCount = group.length // 4 per group
+    if (teamCount === 0) return
+
+    group.forEach((s, rank) => {
+      const remaining = MATCHES_PER_TEAM - s.played
+      const maxPossiblePts = s.points + remaining * POINTS_PER_WIN
+
+      // Can anyone above overtake them? (simplified: compare to the 2nd-place team's max)
+      const secondPlace = group[1]
+
+      if (rank === 0 || rank === 1) {
+        // Check if confirmed: can 3rd place catch them in remaining games?
+        const thirdTeam = group[2]
+        if (thirdTeam) {
+          const thirdMax = thirdTeam.points + (MATCHES_PER_TEAM - thirdTeam.played) * POINTS_PER_WIN
+          if (s.played === MATCHES_PER_TEAM && (rank === 0 || (secondPlace && secondPlace.played === MATCHES_PER_TEAM))) {
+            status[s.team.id] = 'confirmed'
+          } else if (thirdMax < s.points - 0) {
+            // Third place can't reach current points even with all wins
+            status[s.team.id] = 'confirmed'
+          } else {
+            status[s.team.id] = 'projected_top2'
+          }
+        } else {
+          status[s.team.id] = rank < 2 ? 'projected_top2' : 'in_contention'
+        }
+      } else if (rank === 2) {
+        // Third place: check if they can still reach top 2, or qualify as best third
+        const secondMax = secondPlace ? secondPlace.points + (MATCHES_PER_TEAM - secondPlace.played) * POINTS_PER_WIN : 0
+        if (maxPossiblePts < (secondPlace?.points ?? 0) && maxPossiblePts < (group[3]?.points ?? 0)) {
+          // Can't reach 2nd place and 4th can't be worse
+          status[s.team.id] = 'eliminated'
+        } else if (best8Third.includes(s.team.id)) {
+          status[s.team.id] = 'best_third'
+        } else {
+          status[s.team.id] = 'in_contention'
+        }
+      } else {
+        // 4th place: need all wins and other results to go their way
+        if (maxPossiblePts < (group[1]?.points ?? 0)) {
+          status[s.team.id] = 'eliminated'
+        } else {
+          status[s.team.id] = 'in_contention'
+        }
+      }
+    })
+  })
+
+  return status
+}
+
+export function computeThirdPlaceRanking(
+  standings: Record<string, GroupStanding[]>,
+): Array<GroupStanding & { group: string; qualifies: boolean }> {
+  const thirds: Array<GroupStanding & { group: string; qualifies: boolean }> = []
+
+  Object.entries(standings).forEach(([group, groupStandings]) => {
+    const third = groupStandings[2]
+    if (third) thirds.push({ ...third, group, qualifies: false })
+  })
+
+  thirds.sort((a, b) => b.points - a.points || b.gd - a.gd || b.gf - a.gf)
+  return thirds.map((t, i) => ({ ...t, qualifies: i < 8 }))
+}

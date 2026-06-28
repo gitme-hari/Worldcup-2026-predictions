@@ -1,113 +1,465 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { getConfig, getTeams, getFixtures, getPredictions, getResult, fetchLiveData, getLiveData } from '@/lib/store'
-import { getEffectivePrediction } from '@/lib/models'
-import { MODEL_LABELS, MODEL_COLORS, formatTime, pct, goals } from '@/lib/utils'
+import {
+  getFixtures, getTeams, getPredictions, getResults, getLockedPredictions,
+  computeMetrics, fetchLiveData, getLiveData,
+  savePoolRecommendation, getPoolRecommendation,
+} from '@/lib/store'
+import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
+import { buildRecommendation } from '@/lib/recommendation-engine'
+import { buildTeamAdjustments } from '@/lib/learning-layer'
+import { getMatchContext } from '@/lib/match-context'
+import { type ContextInsight, buildTournamentInsights } from '@/lib/context-insights'
+import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
+import { buildDecisionSupport } from '@/lib/decision-support'
+import { computeDisagreementScore } from '@/lib/analytics'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Calendar, Zap, RefreshCw, AlertCircle, ChevronRight } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle, ClipboardList, RefreshCw, TrendingUp, Trophy } from 'lucide-react'
 
-const TEAM_NAMES: Record<string, string> = {
-  mex:'Mexico',rsa:'South Africa',kor:'Korea Republic',cze:'Czechia',
-  can:'Canada',bih:'Bosnia and Herzegovina',qat:'Qatar',sui:'Switzerland',
-  bra:'Brazil',mar:'Morocco',hai:'Haiti',sco:'Scotland',
-  usa:'United States',par:'Paraguay',aus:'Australia',tur:'Türkiye',
-  ger:'Germany',cur:'Curaçao',civ:"Côte d'Ivoire",ecu:'Ecuador',
-  ned:'Netherlands',jpn:'Japan',swe:'Sweden',tun:'Tunisia',
-  bel:'Belgium',egy:'Egypt',irn:'IR Iran',nzl:'New Zealand',
-  esp:'Spain',cpv:'Cabo Verde',ksa:'Saudi Arabia',uru:'Uruguay',
-  fra:'France',sen:'Senegal',irq:'Iraq',nor:'Norway',
-  arg:'Argentina',alg:'Algeria',aut:'Austria',jor:'Jordan',
-  por:'Portugal',cod:'Congo DR',uzb:'Uzbekistan',col:'Colombia',
-  eng:'England',cro:'Croatia',gha:'Ghana',pan:'Panama',
+// ── Shared helpers ─────────────────────────────────────────────────────────────
+
+const BERLIN_TZ = 'Europe/Berlin'
+
+function berlinLabel(utc: string) {
+  const d   = new Date(utc)
+  const now = new Date()
+  const fmt = (date: Date) => date.toLocaleDateString('en-CA', { timeZone: BERLIN_TZ })
+  const todayStr    = fmt(now)
+  const tomorrowStr = fmt(new Date(now.getTime() + 24 * 3600_000))
+  const matchStr    = fmt(d)
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: BERLIN_TZ })
+  let dayLabel: string
+  if (matchStr === todayStr)         dayLabel = 'Today'
+  else if (matchStr === tomorrowStr) dayLabel = 'Tomorrow'
+  else {
+    const wd   = d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: BERLIN_TZ })
+    const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: BERLIN_TZ })
+    dayLabel = `${wd} ${date}`
+  }
+  return `${dayLabel} · ${time} CEST`
 }
 
-function ActiveModelCard() {
-  const config = getConfig()
+function timeUntil(utc: string): string {
+  const diff = new Date(utc).getTime() - Date.now()
+  if (diff <= 0) return 'now'
+  const h = Math.floor(diff / 3_600_000)
+  const m = Math.floor((diff % 3_600_000) / 60_000)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
+function poissonModeScoreline(hl: number, al: number): { h: number; a: number } {
+  let best = { h: 0, a: 0, p: 0 }
+  for (let h = 0; h <= 6; h++)
+    for (let a = 0; a <= 6; a++) {
+      let p = Math.exp(-(hl + al))
+      for (let i = 1; i <= h; i++) p *= hl / i
+      for (let i = 1; i <= a; i++) p *= al / i
+      if (p > best.p) best = { h, a, p }
+    }
+  return best
+}
+
+function poolScore(predH: number, predA: number, actH: number, actA: number): number {
+  if (Math.round(predH) === actH && Math.round(predA) === actA) return 4
+  const predGD = Math.round(predH) - Math.round(predA)
+  const actGD  = actH - actA
+  const predW  = predGD > 0 ? 'H' : predGD < 0 ? 'A' : 'D'
+  const actW   = actGD  > 0 ? 'H' : actGD  < 0 ? 'A' : 'D'
+  if (predW === actW && predGD === actGD) return 2
+  if (predW === actW) return 1
+  return 0
+}
+
+// ── Pool rows: My Picks + model benchmarks ─────────────────────────────────────
+
+function computePoolRows() {
+  const allPreds    = getPredictions()
+  const lockedPreds = getLockedPredictions()
+  const results     = getResults()
+
+  const modelRows = (['A', 'B', 'C'] as const).map(m => {
+    let pts = 0, count = 0
+    results.forEach(r => {
+      const pred = allPreds.find(p => p.fixture_id === r.fixture_id && p.model === m)
+      if (!pred) return
+      pts += poolScore(pred.home_goals, pred.away_goals, r.home_goals, r.away_goals)
+      count++
+    })
+    return { label: `Model ${m}`, model: m as string, pts, count, avg: count > 0 ? pts / count : 0 }
+  })
+
+  let myPts = 0, myCount = 0
+  results.forEach(r => {
+    const locked = lockedPreds.find(p => p.fixture_id === r.fixture_id)
+    if (!locked) return
+    myPts += poolScore(locked.home_goals, locked.away_goals, r.home_goals, r.away_goals)
+    myCount++
+  })
+
+  const myRow = { label: 'My Picks', model: 'me', pts: myPts, count: myCount, avg: myCount > 0 ? myPts / myCount : 0 }
+  return [...modelRows, myRow].sort((a, b) => b.pts - a.pts)
+}
+
+type BettingWindow = '24h' | '36h' | 'all'
+const WINDOW_LABELS: Record<BettingWindow, string> = { '24h': 'Next 24h', '36h': 'Next 36h', all: 'All' }
+
+function filterFixtures(window: BettingWindow): SeedFixture[] {
+  const fixtures    = getFixtures()
+  const results     = getResults()
+  const lockedPreds = getLockedPredictions()
+  const playedIds   = new Set(results.map(r => r.fixture_id))
+  const lockedIds   = new Set(lockedPreds.map(p => p.fixture_id))
+  const now         = new Date()
+  const cutoff      = window === '24h' ? new Date(now.getTime() + 24 * 3600_000)
+    : window === '36h' ? new Date(now.getTime() + 36 * 3600_000) : null
+
+  return fixtures.filter(f => {
+    if (playedIds.has(f.id) || lockedIds.has(f.id)) return false
+    if (new Date(f.kickoff_utc) <= now) return false
+    if (cutoff && new Date(f.kickoff_utc) > cutoff) return false
+    return true
+  }).sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
+}
+
+// ── Section 1: Action Summary ─────────────────────────────────────────────────
+// Answers "what do I need to do?" and "where am I in the pool?"
+
+function ActionSummary({ needsPick, poolRows }: {
+  needsPick: SeedFixture[]
+  poolRows: ReturnType<typeof computePoolRows>
+}) {
+  const first    = needsPick[0]
+  const deadline = first ? timeUntil(first.kickoff_utc) : null
+  const teams    = getTeams()
+  const firstTeams = first ? (() => {
+    const h = teams.find(t => t.id === first.home_team_id)
+    const a = teams.find(t => t.id === first.away_team_id)
+    return `${h?.flag_url ?? ''} ${h?.code ?? '?'} vs ${a?.code ?? '?'} ${a?.flag_url ?? ''}`
+  })() : null
+
+  const myRow    = poolRows.find(r => r.label === 'My Picks')
+  const bestModel = poolRows.filter(r => r.model !== 'me').sort((a, b) => b.pts - a.pts)[0]
+  const gap = myRow && bestModel ? bestModel.pts - myRow.pts : null
+
+  const hasData = (myRow?.count ?? 0) > 0
+
   return (
-    <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-900 px-4 py-3 text-white">
-      <div>
-        <div className="text-xs text-zinc-400">Active Model</div>
-        <div className="text-base font-bold">{MODEL_LABELS[config.active_model]}</div>
-        {config.active_model === 'hybrid' && (
-          <div className="text-xs text-zinc-400 mt-0.5">A:{config.weight_a} B:{config.weight_b} C:{config.weight_c}</div>
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+          <ClipboardList className="h-4 w-4 text-blue-500" /> Action Summary
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+          {/* Picks needed */}
+          <div className="rounded-lg bg-zinc-50 border border-zinc-100 px-3 py-3">
+            {needsPick.length > 0 ? (
+              <>
+                <p className="text-2xl font-black text-zinc-900 tabular-nums">{needsPick.length}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  pick{needsPick.length !== 1 ? 's' : ''} needed
+                </p>
+                {deadline && (
+                  <p className="text-[11px] text-amber-600 font-medium mt-1">
+                    First in {deadline}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <CheckCircle className="h-5 w-5 text-emerald-500 mb-1" />
+                <p className="text-xs text-zinc-500">All picks locked</p>
+              </>
+            )}
+          </div>
+
+          {/* Pool position */}
+          <div className="rounded-lg bg-zinc-50 border border-zinc-100 px-3 py-3">
+            {hasData ? (
+              <>
+                <p className="text-2xl font-black text-zinc-900 tabular-nums">{myRow!.pts}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  my pts{myRow!.count > 0 ? ` · ${myRow!.avg.toFixed(1)}/match` : ''}
+                </p>
+                {gap !== null && gap > 0 && (
+                  <p className="text-[11px] text-red-500 font-medium mt-1">
+                    −{gap} vs {bestModel?.label}
+                  </p>
+                )}
+                {gap !== null && gap <= 0 && (
+                  <p className="text-[11px] text-emerald-600 font-medium mt-1">
+                    Leading pool
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-black text-zinc-300">—</p>
+                <p className="text-xs text-zinc-400 mt-0.5">no results yet</p>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Upcoming fixture teaser */}
+        {firstTeams && (
+          <p className="mt-2.5 text-[11px] text-zinc-400">
+            Next: {firstTeams} · {berlinLabel(first!.kickoff_utc)}
+          </p>
         )}
-      </div>
-      <Link href="/settings" className="text-xs text-zinc-400 hover:text-white underline">Change</Link>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Decision support card (replaces ContextSignals + RecommendationInputs) ────
+
+function DecisionSupportCard({ rec, fix, home, away, learningAdjs }: {
+  rec: NonNullable<ReturnType<typeof buildRecommendation>>
+  fix: SeedFixture
+  home: SeedTeam | undefined
+  away: SeedTeam | undefined
+  learningAdjs: ReturnType<typeof buildTeamAdjustments>
+}) {
+  const [showDetail, setShowDetail] = useState(false)
+  const fixtures = getFixtures()
+  const results  = getResults()
+  const allStandings   = computeGroupStandings(fixtures, results)
+  const groupStandings = allStandings[fix.group] ?? []
+  const matchday       = fix.matchday ?? 1
+  const homeStanding   = groupStandings.find(s => s.teamId === fix.home_team_id)
+  const awayStanding   = groupStandings.find(s => s.teamId === fix.away_team_id)
+  const homeQual       = computeQualificationStatus(fix.home_team_id, groupStandings, matchday)
+  const awayQual       = computeQualificationStatus(fix.away_team_id, groupStandings, matchday)
+  const homeAdj        = learningAdjs.find(a => a.teamId === fix.home_team_id)
+  const awayAdj        = learningAdjs.find(a => a.teamId === fix.away_team_id)
+  const apiCtx         = getMatchContext(fix.id)
+
+  const ds = buildDecisionSupport({ rec, homeAdj, awayAdj, homeStanding, awayStanding, homeQual, awayQual, apiCtx, home, away })
+
+  const confCls: Record<string, string> = {
+    'High': 'text-emerald-700', 'Medium-High': 'text-emerald-600',
+    'Medium': 'text-amber-600', 'Medium-Low': 'text-amber-700', 'Low': 'text-red-600',
+  }
+
+  // Prioritise: challenges first, then supports, max 3
+  const bullets = [
+    ...ds.challengeFactors.map(t => ({ text: t, type: 'challenge' as const })),
+    ...ds.supportFactors.map(t => ({ text: t, type: 'support' as const })),
+  ].slice(0, 3)
+
+  return (
+    <div className="border-t border-zinc-50 pt-2 space-y-1.5">
+      {/* Challenge warning */}
+      {ds.challengeLevel === 'significant' && (
+        <p className="text-[10px] font-semibold text-amber-700 flex items-center gap-1">
+          <span>⚠</span> Context challenges this pick
+        </p>
+      )}
+
+      {/* Bullets */}
+      {bullets.map((b, i) => (
+        <p key={i} className={`text-[11px] flex items-start gap-1 ${b.type === 'challenge' ? 'text-amber-700' : 'text-emerald-700'}`}>
+          <span className="shrink-0 font-bold">{b.type === 'challenge' ? '−' : '+'}</span>
+          {b.text}
+        </p>
+      ))}
+      {bullets.length === 0 && (
+        <p className="text-[10px] text-zinc-400">No notable context signals yet</p>
+      )}
+
+      {/* Net effect verdict */}
+      {ds.netEffect && (
+        <p className={`text-[10px] font-medium rounded px-2 py-1.5 ${
+          ds.challengeLevel === 'significant' ? 'bg-amber-50 text-amber-800' :
+          ds.challengeLevel === 'minor'       ? 'bg-zinc-50 text-zinc-600' :
+                                               'bg-emerald-50 text-emerald-800'
+        }`}>
+          {ds.netEffect}
+        </p>
+      )}
+
+      {/* Confidence line */}
+      <p className="text-[10px] text-zinc-500">
+        Confidence: <span className="font-semibold text-zinc-700">{ds.engineConfidence}</span>
+        {ds.contextConfidence !== ds.engineConfidence && (
+          <> → <span className={`font-semibold ${confCls[ds.contextConfidence] ?? ''}`}>{ds.contextConfidence}</span></>
+        )}
+      </p>
+
+      {/* Collapsible detail */}
+      <button
+        onClick={() => setShowDetail(v => !v)}
+        className="text-[10px] text-zinc-400 hover:text-zinc-600 transition-colors"
+      >
+        {showDetail ? '▲' : '▶'} Model detail
+      </button>
+      {showDetail && (
+        <div className="space-y-0.5 text-[10px] text-zinc-500 pl-2">
+          <p>
+            {(['A', 'B', 'C'] as const).map(m => {
+              const sl = rec.modelScorelines[m]
+              return sl ? `Mdl ${m}: ${sl.h}–${sl.a}` : null
+            }).filter(Boolean).join(' · ')}
+          </p>
+          <p>xG: {rec.avgXgHome}–{rec.avgXgAway} · {Math.round(rec.outcomeProbs.home * 100)}%/{Math.round(rec.outcomeProbs.draw * 100)}%/{Math.round(rec.outcomeProbs.away * 100)}%</p>
+          {rec.alternatives.length > 0 && (
+            <p>Alternatives: {rec.alternatives.slice(0, 3).map(a => `${a.home}–${a.away}`).join(' · ')}</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-function TodayMatches() {
-  const fixtures = getFixtures()
-  const teams = getTeams()
-  const predictions = getPredictions()
-  const config = getConfig()
-  const todayStr = new Date().toISOString().split('T')[0]
+// ── Upcoming intelligence ─────────────────────────────────────────────────────
 
-  const todayMatches = fixtures
-    .filter(f => new Date(f.kickoff_utc).toISOString().split('T')[0] === todayStr)
-    .sort((a, b) => new Date(a.kickoff_utc).getTime() - new Date(b.kickoff_utc).getTime())
+function UpcomingIntelligence() {
+  const fixtures     = getFixtures()
+  const results      = getResults()
+  const teams        = getTeams()
+  const teamMap      = Object.fromEntries(teams.map(t => [t.id, t]))
+  const allStandings = computeGroupStandings(fixtures, results)
+  const now          = Date.now()
+  const horizon      = now + 7 * 24 * 3_600_000
 
-  const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
+  const items: Array<{ text: string; type: ContextInsight['type'] }> = []
+  for (const fix of fixtures) {
+    const kickoff = new Date(fix.kickoff_utc).getTime()
+    if (kickoff <= now || kickoff > horizon) continue
+    const groupStandings = allStandings[fix.group] ?? []
+    const matchday = fix.matchday ?? 1
+    const homeQual = computeQualificationStatus(fix.home_team_id, groupStandings, matchday)
+    const awayQual = computeQualificationStatus(fix.away_team_id, groupStandings, matchday)
+    const ctx = getMatchContext(fix.id)
+    const insights = buildTournamentInsights(
+      teamMap[fix.home_team_id], teamMap[fix.away_team_id],
+      { standing: groupStandings.find(s => s.teamId === fix.home_team_id), qualStatus: homeQual },
+      { standing: groupStandings.find(s => s.teamId === fix.away_team_id), qualStatus: awayQual },
+      ctx,
+    )
+    for (const ins of insights) {
+      if (ins.type !== 'info') items.push(ins)
+    }
+  }
+
+  if (items.length === 0) return null
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-1.5">
-          <Calendar className="h-3.5 w-3.5" />Today's Matches
-        </CardTitle>
-        <Link href="/matches" className="text-xs text-blue-600 hover:underline flex items-center gap-0.5">
-          All matches <ChevronRight className="h-3 w-3" />
-        </Link>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium text-zinc-700">Upcoming Intelligence</CardTitle>
+        <p className="text-[10px] text-zinc-400 mt-0.5">Items that could affect prediction confidence</p>
       </CardHeader>
-      <CardContent className="p-0">
-        {todayMatches.length === 0 ? (
-          <p className="px-4 py-4 text-xs text-zinc-400">No matches today.</p>
-        ) : todayMatches.map(f => {
-          const home = teamMap[f.home_team_id]
-          const away = teamMap[f.away_team_id]
-          const pred = getEffectivePrediction(predictions as any, f.id, config.active_model, {
-            a: config.weight_a, b: config.weight_b, c: config.weight_c,
-          })
-          const result = getResult(f.id)
+      <CardContent className="space-y-1 pt-0">
+        {items.slice(0, 6).map((item, i) => (
+          <div key={i} className="flex items-start gap-2 text-xs">
+            <span className={item.type === 'positive' ? 'text-emerald-500' : 'text-amber-500'}>
+              {item.type === 'positive' ? '↑' : '⚠'}
+            </span>
+            <span className="text-zinc-600">{item.text}</span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Section 2: Picks to Submit ─────────────────────────────────────────────────
+// Engine recommendation per fixture — no model labels in primary view
+
+function PicksToSubmit({ needsPick, window, onWindowChange, learningAdjs }: {
+  needsPick: SeedFixture[]
+  window: BettingWindow
+  onWindowChange: (w: BettingWindow) => void
+  learningAdjs: ReturnType<typeof buildTeamAdjustments>
+}) {
+  const allPreds = getPredictions()
+  const teams    = getTeams()
+  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+          <Trophy className="h-4 w-4 text-amber-500" /> Picks to Submit
+        </CardTitle>
+        <div className="flex gap-1.5 mt-2">
+          {(['24h', '36h', 'all'] as BettingWindow[]).map(w => (
+            <button key={w} onClick={() => onWindowChange(w)}
+              className={`rounded-full px-3 py-0.5 text-xs font-medium transition-colors ${
+                window === w ? 'bg-zinc-800 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
+              }`}>
+              {WINDOW_LABELS[w]}
+            </button>
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-1">
+        {needsPick.length === 0 ? (
+          <div className="flex items-center gap-2 py-3 text-sm text-zinc-400">
+            <CheckCircle className="h-4 w-4 text-emerald-400" />
+            All picks locked for this window.
+          </div>
+        ) : needsPick.map(fix => {
+          const home = teamMap[fix.home_team_id]
+          const away = teamMap[fix.away_team_id]
+          const preds = allPreds.filter(p => p.fixture_id === fix.id)
+
+          // Engine recommendation (uses all three models)
+          const rec = buildRecommendation(preds)
+
+          // Tournament learning signals for this fixture's teams
+          const confStyle =
+            rec?.confidence === 'High'   ? 'text-emerald-600' :
+            rec?.confidence === 'Medium' ? 'text-amber-600' : 'text-zinc-400'
 
           return (
-            <Link key={f.id} href="/matches" className="block border-b border-zinc-50 last:border-0 hover:bg-zinc-50">
-              <div className="px-4 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-lg">{home?.flag_url}</span>
-                    <span className="text-sm font-semibold text-zinc-900">{home?.code}</span>
-                    {result ? (
-                      <span className="text-sm font-black text-zinc-900 mx-1">{result.home_goals}–{result.away_goals}</span>
-                    ) : pred ? (
-                      <span className="text-sm font-medium text-zinc-400 mx-1">{goals(pred.home_goals)}–{goals(pred.away_goals)}</span>
-                    ) : (
-                      <span className="text-sm text-zinc-300 mx-1">vs</span>
-                    )}
-                    <span className="text-sm font-semibold text-zinc-900">{away?.code}</span>
-                    <span className="text-lg">{away?.flag_url}</span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {result ? <Badge variant="success">Final</Badge> : <Badge variant="warning">Today</Badge>}
-                    <span className="text-xs text-zinc-400">{f.group ? `Grp ${f.group}` : f.stage.toUpperCase()}</span>
-                    <span className="text-xs text-zinc-400">{formatTime(f.kickoff_utc)}</span>
-                  </div>
+            <div key={fix.id} className="rounded-lg border border-zinc-100 bg-white p-3 space-y-2">
+              {/* Fixture header */}
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">
+                    {home?.flag_url} {home?.code ?? fix.home_team_id}
+                    <span className="text-zinc-300 font-normal mx-1.5">vs</span>
+                    {away?.code ?? fix.away_team_id} {away?.flag_url}
+                  </p>
+                  <p className="text-xs text-zinc-400 mt-0.5">{berlinLabel(fix.kickoff_utc)}</p>
                 </div>
-                {pred && !result && (
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <div className="h-1.5 flex-1 rounded-full overflow-hidden bg-zinc-100 flex">
-                      <div className="h-full bg-blue-500 rounded-l-full" style={{ width: `${pred.home_win_prob * 100}%` }} />
-                      <div className="h-full bg-zinc-300" style={{ width: `${pred.draw_prob * 100}%` }} />
-                      <div className="h-full bg-red-400 rounded-r-full" style={{ width: `${pred.away_win_prob * 100}%` }} />
-                    </div>
-                    <span className="text-xs text-zinc-400 shrink-0">{pct(pred.home_win_prob)} / {pct(pred.draw_prob)} / {pct(pred.away_win_prob)}</span>
-                  </div>
-                )}
               </div>
-            </Link>
+
+              {/* Recommendation + CTA row */}
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-[10px] text-zinc-400 uppercase tracking-wide">Engine recommendation</p>
+                  {rec ? (
+                    <p className="text-2xl font-black text-zinc-900 tabular-nums leading-tight mt-0.5">
+                      {rec.scoreline.home}–{rec.scoreline.away}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-zinc-300 mt-0.5">No prediction</p>
+                  )}
+                  {rec && (
+                    <p className={`text-xs mt-0.5 font-medium ${confStyle}`}>
+                      {rec.confidence} confidence
+                    </p>
+                  )}
+                </div>
+                <Link
+                  href={`/matches?fixture=${fix.id}&expand=true`}
+                  className="shrink-0 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-700 transition-colors"
+                >
+                  Review & Lock →
+                </Link>
+              </div>
+
+              {/* Decision support */}
+              {rec && (
+                <DecisionSupportCard rec={rec} fix={fix} home={home} away={away} learningAdjs={learningAdjs} />
+              )}
+            </div>
           )
         })}
       </CardContent>
@@ -115,18 +467,182 @@ function TodayMatches() {
   )
 }
 
+// ── Section 3: Pool Position ───────────────────────────────────────────────────
+// My Picks is the hero. Models are benchmarks.
+
+function PoolPosition({ poolRows }: { poolRows: ReturnType<typeof computePoolRows> }) {
+  const [showFull, setShowFull] = useState(false)
+
+  if (poolRows.every(r => r.pts === 0 && r.count === 0)) return null
+
+  const myRow     = poolRows.find(r => r.model === 'me')
+  const modelRows = poolRows.filter(r => r.model !== 'me').sort((a, b) => b.pts - a.pts)
+  const bestModel = modelRows[0]
+  const gap       = myRow && bestModel ? bestModel.pts - myRow.pts : null
+
+  const myRank    = poolRows.findIndex(r => r.model === 'me') + 1
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+          <TrendingUp className="h-4 w-4 text-blue-500" /> Pool Position
+        </CardTitle>
+        <p className="text-[10px] text-zinc-400 mt-0.5">
+          Exact = 4 pts · Correct winner + GD = 2 pts · Correct winner = 1 pt
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* My picks — hero */}
+        {myRow ? (
+          <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-blue-600">My Picks</p>
+              <p className="text-2xl font-black text-zinc-900 tabular-nums leading-tight">{myRow.pts} pts</p>
+              {myRow.count > 0 && (
+                <p className="text-xs text-zinc-500">{myRow.avg.toFixed(2)}/match · {myRow.count} played</p>
+              )}
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-zinc-400">Rank</p>
+              <p className="text-2xl font-black text-zinc-900">#{myRank}</p>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Benchmark summary */}
+        {bestModel && (
+          <div className="rounded-md bg-zinc-50 border border-zinc-100 px-3 py-2.5 text-xs space-y-1">
+            <p className="font-semibold text-zinc-600">Benchmark</p>
+            <div className="flex items-center justify-between">
+              <span className="text-zinc-500">{bestModel.label} leads models</span>
+              <span className="font-semibold text-zinc-700">{bestModel.pts} pts</span>
+            </div>
+            {gap !== null && gap > 0 && (
+              <p className="text-red-500 font-medium">You are {gap} pt{gap !== 1 ? 's' : ''} behind</p>
+            )}
+            {gap !== null && gap <= 0 && (
+              <p className="text-emerald-600 font-medium">You are ahead of all benchmarks</p>
+            )}
+          </div>
+        )}
+
+        {/* Full leaderboard — collapsed */}
+        <button
+          onClick={() => setShowFull(v => !v)}
+          className="w-full text-left text-[11px] text-zinc-400 hover:text-zinc-600 transition-colors"
+        >
+          {showFull ? '▲ Hide' : '▶ Full leaderboard'}
+        </button>
+        {showFull && (
+          <div className="space-y-1.5">
+            {poolRows.map((row, i) => {
+              const isMe = row.model === 'me'
+              return (
+                <div key={row.label}
+                  className={`flex items-center justify-between rounded-md px-3 py-2 text-sm ${
+                    isMe ? 'bg-blue-50 border border-blue-100' : 'bg-zinc-50'
+                  }`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-400 w-4">#{i + 1}</span>
+                    <span className={`font-medium ${isMe ? 'text-blue-700' : 'text-zinc-700'}`}>{row.label}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-zinc-500">
+                    <span>{row.count}G</span>
+                    <span className="font-semibold text-zinc-700 tabular-nums w-10 text-right">{row.pts} pts</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Section 4: Uncertain Fixtures ─────────────────────────────────────────────
+// Fixtures where the engine has low confidence — shown without model labels
+
+function UncertainFixtures({ needsPick }: { needsPick: SeedFixture[] }) {
+  const allPreds = getPredictions()
+  const teams    = getTeams()
+  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
+
+  const uncertain = needsPick.flatMap(fix => {
+    const preds = allPreds.filter(p => p.fixture_id === fix.id && ['A', 'B', 'C'].includes(p.model))
+    if (preds.length < 2) return []
+    const disScore = computeDisagreementScore(preds.map(p => ({ hw: p.home_win_prob, dw: p.draw_prob, aw: p.away_win_prob })))
+    const avgDw    = preds.reduce((s, p) => s + p.draw_prob, 0) / preds.length
+    if (disScore < 0.12 && avgDw <= 0.30) return []
+
+    const rec     = buildRecommendation(preds)
+    const reason  = disScore >= 0.12 && avgDw > 0.30 ? 'Models split · draw likely'
+      : disScore >= 0.12 ? 'Models disagree on outcome'
+      : 'Draw probability elevated'
+
+    return [{ fix, rec, reason }]
+  })
+
+  if (uncertain.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-1.5 text-sm font-semibold">
+          <AlertTriangle className="h-4 w-4 text-amber-500" /> Uncertain Fixtures ({uncertain.length})
+        </CardTitle>
+        <p className="text-xs text-zinc-400 mt-0.5">
+          These matches carry higher variance — worth reviewing before locking.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {uncertain.map(({ fix, rec, reason }) => {
+          const home = teamMap[fix.home_team_id]
+          const away = teamMap[fix.away_team_id]
+          return (
+            <div key={fix.id} className="space-y-1.5">
+              <p className="text-sm font-semibold text-zinc-900">
+                {home?.flag_url} {home?.code} vs {away?.code} {away?.flag_url}
+              </p>
+              <p className="text-xs text-zinc-400">{berlinLabel(fix.kickoff_utc)}</p>
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                {rec ? (
+                  <span className="rounded bg-zinc-100 px-2.5 py-1 font-semibold text-zinc-700">
+                    Engine: {rec.scoreline.home}–{rec.scoreline.away}
+                  </span>
+                ) : null}
+                <span className="rounded bg-amber-50 border border-amber-100 px-2.5 py-1 text-amber-700">
+                  {reason}
+                </span>
+              </div>
+              <Link
+                href={`/matches?fixture=${fix.id}&expand=true`}
+                className="inline-block text-xs text-blue-600 hover:underline"
+              >
+                Review manually →
+              </Link>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Section 5: Live Intelligence ──────────────────────────────────────────────
+
 function LiveIntelligencePanel() {
-  const [loading, setLoading] = useState(false)
+  const [open, setOpen]         = useState(false)
+  const [loading, setLoading]   = useState(false)
   const [liveData, setLiveData] = useState(() => getLiveData())
-  const [error, setError] = useState<string | null>(null)
-  const [showLog, setShowLog] = useState(false)
+  const [error, setError]       = useState<string | null>(null)
 
   const handleRefresh = async () => {
-    setLoading(true)
-    setError(null)
+    setLoading(true); setError(null)
     try {
-      const data = await fetchLiveData()
-      setLiveData(data)
+      const d = await fetchLiveData()
+      setLiveData(d)
       window.dispatchEvent(new Event('storage'))
     } catch {
       setError('Failed to fetch live data')
@@ -135,126 +651,187 @@ function LiveIntelligencePanel() {
     }
   }
 
+  const injuries    = liveData?.newsItems.filter(n => n.type === 'injury') ?? []
   const adjustments = liveData
     ? Object.entries(liveData.teamAdjustments).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
     : []
-  const injuryItems = liveData?.newsItems.filter(n => n.type === 'injury') ?? []
-  const positiveItems = liveData?.newsItems.filter(n => n.type === 'positive') ?? []
+
+  if (!liveData && injuries.length === 0) {
+    return (
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-sm font-medium text-zinc-500">Live Intelligence</CardTitle>
+          <button onClick={handleRefresh} disabled={loading}
+            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50">
+            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Fetching…' : 'Refresh'}
+          </button>
+        </CardHeader>
+        <CardContent className="pt-0 pb-3">
+          <p className="text-xs text-zinc-400">No live data — click Refresh to pull latest injury news.</p>
+          {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-1.5">
-          <Zap className="h-3.5 w-3.5 text-green-500" />Live Intelligence
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="flex items-center gap-1.5 text-sm font-medium text-zinc-700">
+          Live Intelligence
+          {injuries.length > 0 && (
+            <span className="rounded-full bg-red-100 text-red-600 text-[10px] font-bold px-1.5 py-0.5">
+              {injuries.length}
+            </span>
+          )}
         </CardTitle>
         <div className="flex items-center gap-2">
-          {liveData && adjustments.length > 0 && (
-            <button onClick={() => setShowLog(v => !v)} className="text-xs text-blue-600 hover:underline">
-              {showLog ? 'Hide log' : 'View log'}
-            </button>
-          )}
-          <button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-          >
+          <button onClick={handleRefresh} disabled={loading}
+            className="flex items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50">
             <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
             {loading ? 'Fetching…' : 'Refresh'}
+          </button>
+          <button onClick={() => setOpen(v => !v)} className="text-xs text-zinc-500 hover:text-zinc-800 underline">
+            {open ? 'Hide' : 'Show'}
           </button>
         </div>
       </CardHeader>
 
-      <CardContent className="pt-0">
-        {!liveData ? (
-          <p className="text-xs text-zinc-400">No data yet — click Refresh to pull live ESPN data.</p>
-        ) : (
-          <div className="text-xs text-zinc-400">
-            {adjustments.length} teams adjusted · {injuryItems.length} injury alerts · last updated{' '}
-            {new Date(liveData.fetchedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-          </div>
-        )}
+      {/* Preview: show top injury without expanding */}
+      {!open && injuries.length > 0 && (
+        <CardContent className="pt-0 pb-3 space-y-1">
+          {injuries.slice(0, 2).map((item, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-xs bg-red-50 rounded px-2.5 py-1.5">
+              <span className="text-red-400 shrink-0 mt-0.5">●</span>
+              <span className="text-zinc-600">{item.headline}</span>
+            </div>
+          ))}
+        </CardContent>
+      )}
 
-        {error && (
-          <div className="mt-2 flex items-center gap-1.5 text-xs text-red-500">
-            <AlertCircle className="h-3 w-3" />{error}
-          </div>
-        )}
-
-        {/* Always show injury alerts when present */}
-        {!showLog && injuryItems.length > 0 && (
-          <div className="mt-3 space-y-1">
-            {injuryItems.slice(0, 3).map((item, i) => (
-              <div key={i} className="flex items-start gap-1.5 text-xs bg-red-50 rounded px-2.5 py-1.5">
-                <span className="text-red-400 shrink-0 mt-0.5">●</span>
-                <span className="text-zinc-600">{item.headline}</span>
+      {open && (
+        <CardContent className="pt-0 space-y-4">
+          {liveData && (
+            <p className="text-xs text-zinc-400">
+              {adjustments.length} team adjustment{adjustments.length !== 1 ? 's' : ''} · updated{' '}
+              {new Date(liveData.fetchedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            </p>
+          )}
+          {injuries.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-red-500 mb-1.5">Injury alerts</p>
+              <div className="space-y-1">
+                {injuries.map((item, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-xs bg-red-50 rounded px-2.5 py-1.5">
+                    <span className="text-red-400 shrink-0 mt-0.5">●</span>
+                    <span className="text-zinc-600">{item.headline}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-
-        {showLog && liveData && (
-          <div className="mt-3 space-y-4 border-t border-zinc-100 pt-3">
-            {adjustments.length > 0 && (
-              <div>
-                <div className="text-xs font-semibold text-zinc-500 mb-2">Team rating adjustments</div>
-                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-                  {adjustments.map(([id, adj]) => (
-                    <div key={id} className="flex items-center justify-between rounded bg-zinc-50 px-2.5 py-1.5">
-                      <span className="text-xs text-zinc-700 font-medium truncate">{TEAM_NAMES[id] ?? id}</span>
-                      <span className={`text-xs font-bold ml-2 shrink-0 ${adj > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                        {adj > 0 ? '+' : ''}{(adj * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-1.5 text-xs text-zinc-400">Green = boosted · Red = downgraded</p>
+            </div>
+          )}
+          {adjustments.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-zinc-500 mb-2">Live team adjustments</p>
+              <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                {adjustments.map(([id, adj]) => (
+                  <div key={id} className="flex items-center justify-between rounded bg-zinc-50 px-2.5 py-1.5">
+                    <span className="text-xs text-zinc-700 font-medium truncate">{id.toUpperCase()}</span>
+                    <span className={`text-xs font-bold ml-2 shrink-0 ${adj > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {adj > 0 ? '+' : ''}{(adj * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                ))}
               </div>
-            )}
-            {injuryItems.length > 0 && (
-              <div>
-                <div className="text-xs font-semibold text-red-500 mb-1.5">⚠ Injury / suspension alerts</div>
-                <div className="space-y-1">
-                  {injuryItems.map((item, i) => (
-                    <div key={i} className="flex items-start gap-1.5 text-xs bg-red-50 rounded px-2.5 py-1.5">
-                      <span className="text-red-400 shrink-0 mt-0.5">●</span>
-                      <span className="text-zinc-600">{item.headline}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {positiveItems.length > 0 && (
-              <div>
-                <div className="text-xs font-semibold text-green-600 mb-1.5">✓ Positive updates</div>
-                <div className="space-y-1">
-                  {positiveItems.map((item, i) => (
-                    <div key={i} className="flex items-start gap-1.5 text-xs bg-green-50 rounded px-2.5 py-1.5">
-                      <span className="text-green-500 shrink-0 mt-0.5">●</span>
-                      <span className="text-zinc-600">{item.headline}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-1.5 text-xs text-red-500">
+              <AlertCircle className="h-3 w-3" />{error}
+            </div>
+          )}
+        </CardContent>
+      )}
     </Card>
   )
 }
 
+// ── Pool recommendation snapshots ─────────────────────────────────────────────
+// Write-once snapshot per fixture using the engine recommendation.
+
+function generateRecommendationSnapshots() {
+  const allFixtures = getFixtures()
+  const allPreds    = getPredictions()
+  allFixtures.forEach(f => {
+      if (getPoolRecommendation(f.id)) return  // immutable — never overwrite
+      const preds = allPreds.filter(p => p.fixture_id === f.id)
+      const rec   = buildRecommendation(preds)
+      if (!rec) {
+        // Fallback: mode scoreline from first available prediction
+        const pred = preds[0]
+        if (!pred) return
+        const sl = poissonModeScoreline(pred.home_goals, pred.away_goals)
+        savePoolRecommendation({
+          fixture_id: f.id,
+          recommended_home: sl.h,
+          recommended_away: sl.a,
+          recommended_model: (pred.model as 'A' | 'B' | 'C') ?? 'A',
+          recommendation_reason: 'WC26 Recommendation Engine',
+        })
+        return
+      }
+      const matchingModel = (['A', 'B', 'C'] as const).find(m => {
+        const sl = rec.modelScorelines[m]
+        return sl && sl.h === rec.scoreline.home && sl.a === rec.scoreline.away
+      }) ?? 'A'
+      savePoolRecommendation({
+        fixture_id: f.id,
+        recommended_home: rec.scoreline.home,
+        recommended_away: rec.scoreline.away,
+        recommended_model: matchingModel,
+        recommendation_reason: 'WC26 Recommendation Engine',
+      })
+    })
+}
+
+// ── Root ───────────────────────────────────────────────────────────────────────
+
 export function HomeDashboard() {
   const [mounted, setMounted] = useState(false)
+  const [pickWindow, setPickWindow] = useState<BettingWindow>('24h')
   useEffect(() => setMounted(true), [])
-  if (!mounted) return (
-    <div className="space-y-3 animate-pulse">
-      {[...Array(3)].map((_, i) => <div key={i} className="h-24 rounded-lg bg-zinc-100" />)}
-    </div>
-  )
+
+  if (!mounted) {
+    return (
+      <div className="space-y-3 animate-pulse">
+        {[...Array(4)].map((_, i) => <div key={i} className="h-24 rounded-lg bg-zinc-100" />)}
+      </div>
+    )
+  }
+
+  const needsPick    = filterFixtures(pickWindow)
+  const poolRows     = computePoolRows()
+  const allPreds     = getPredictions()
+
+  // Build tournament learning signals once for all teams
+  const learningAdjs = buildTeamAdjustments(getTeams(), getFixtures(), getResults(), allPreds)
+
+  // Write immutable recommendation snapshots for upcoming fixtures
+  generateRecommendationSnapshots()
+
   return (
     <div className="space-y-4">
-      <ActiveModelCard />
-      <TodayMatches />
+      <ActionSummary needsPick={needsPick} poolRows={poolRows} />
+      <PicksToSubmit
+        needsPick={needsPick}
+        window={pickWindow}
+        onWindowChange={setPickWindow}
+        learningAdjs={learningAdjs}
+      />
+      <UpcomingIntelligence />
+      <UncertainFixtures needsPick={needsPick} />
+      <PoolPosition poolRows={poolRows} />
       <LiveIntelligencePanel />
     </div>
   )

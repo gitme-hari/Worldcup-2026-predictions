@@ -16,7 +16,7 @@ const KEYS = {
   liveData: 'wc26_live_data',
   lockedPreds: 'wc26_locked_preds',
   humanPreds: 'wc26_human_preds',
-  tabpfnPreds: 'wc26_tabpfn_preds',
+  squadAdjustments: 'wc26_squad_adjustments',
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -111,25 +111,6 @@ export function getPredictions(): SeedPrediction[] {
     })
   }
 
-  // Client-side only: overlay TabPFN predictions on Model C
-  if (typeof window !== 'undefined') {
-    const tabpfnPreds = getTabPFNPredictions()
-    if (tabpfnPreds.length > 0) {
-      const tabpfnMap = Object.fromEntries(tabpfnPreds.map(p => [p.fixture_id, p]))
-      return basePreds.map(pred => {
-        if (pred.model !== 'C') return pred
-        const tp = tabpfnMap[pred.fixture_id]
-        if (!tp) return pred
-        return {
-          ...pred,
-          home_win_prob: tp.home_win_prob,
-          draw_prob: tp.draw_prob,
-          away_win_prob: tp.away_win_prob,
-        }
-      })
-    }
-  }
-
   return basePreds
 }
 
@@ -137,23 +118,6 @@ export function getPredictionsForFixture(fixtureId: string): SeedPrediction[] {
   return getPredictions().filter(p => p.fixture_id === fixtureId)
 }
 
-// --- TabPFN Predictions ---
-export interface TabPFNPrediction {
-  fixture_id: string
-  home_win_prob: number
-  draw_prob: number
-  away_win_prob: number
-  fetched_at: string
-}
-
-export function getTabPFNPredictions(): TabPFNPrediction[] {
-  return load<TabPFNPrediction[]>(KEYS.tabpfnPreds, [])
-}
-
-export function saveTabPFNPredictions(preds: Omit<TabPFNPrediction, 'fetched_at'>[]) {
-  const now = new Date().toISOString()
-  save(KEYS.tabpfnPreds, preds.map(p => ({ ...p, fetched_at: now })))
-}
 
 // --- Config ---
 const DEFAULT_CONFIG: ModelConfig = {
@@ -331,6 +295,11 @@ export interface LockedPrediction {
   draw_prob: number
   away_win_prob: number
   locked_at: string
+  pick_source?: 'raw' | 'calibrated' | 'custom' | 'pool_recommendation' | 'backfilled'
+  // Lineage fields — stored locally only, not synced to Supabase until migration
+  override_reason?: string
+  pool_rec_home?: number
+  pool_rec_away?: number
 }
 
 export function getLockedPredictions(): LockedPrediction[] {
@@ -395,40 +364,100 @@ export function deleteHumanPrediction(fixtureId: string) {
   save(KEYS.humanPreds, getHumanPredictions().filter(p => p.fixture_id !== fixtureId))
 }
 
-// Returns per-team bias corrections learned from human overrides
-// For each team the user consistently over/under-predicted vs model,
-// compute an average delta that can be used as a Model D adjustment
-export function computeHumanBiases(): Record<string, number> {
+export interface HumanBiasSummary {
+  teamId: string
+  samples: number
+  avg: number
+  // reliable = 3+ samples, low = 2 samples, insufficient = 1 sample
+  confidence: 'reliable' | 'low' | 'insufficient'
+  qualified: boolean  // backward compat: confidence !== 'insufficient' && |avg| > 0.01
+}
+
+// Compares human overrides against the ORIGINAL seed model prediction (not the locked value).
+// Falls back to active model when no LockedPrediction exists (sync-gap defence).
+// Only counts overrides that have a completed result (completed = has actual score).
+export function computeHumanBiasData(): HumanBiasSummary[] {
   const humanPreds = getHumanPredictions()
   const lockedPreds = getLockedPredictions()
+  const allPreds = getPredictions()
   const fixtures = getFixtures()
+  const results = getResults()
+  const activeModel = (load<{ active_model?: string }>(KEYS.config, {}).active_model ?? 'A') as 'A' | 'B' | 'C'
 
   const teamDeltas: Record<string, number[]> = {}
 
   for (const hp of humanPreds) {
-    const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
-    if (!locked) continue
+    // Only use completed overrides (match has a result)
+    if (!results.find(r => r.fixture_id === hp.fixture_id)) continue
     const fixture = fixtures.find(f => f.id === hp.fixture_id)
     if (!fixture) continue
 
-    const homeDelta = hp.home_goals - locked.home_goals
-    const awayDelta = hp.away_goals - locked.away_goals
+    const locked = lockedPreds.find(p => p.fixture_id === hp.fixture_id)
+    const modelKey = (locked?.model as 'A' | 'B' | 'C' | undefined) || activeModel
+    const origPred = allPreds.find(p => p.fixture_id === hp.fixture_id && p.model === modelKey)
+    if (!origPred) continue
+
+    const homeDelta = hp.home_goals - origPred.home_goals
+    const awayDelta = hp.away_goals - origPred.away_goals
 
     if (!teamDeltas[fixture.home_team_id]) teamDeltas[fixture.home_team_id] = []
     teamDeltas[fixture.home_team_id].push(homeDelta)
-
     if (!teamDeltas[fixture.away_team_id]) teamDeltas[fixture.away_team_id] = []
     teamDeltas[fixture.away_team_id].push(awayDelta)
   }
 
-  const biases: Record<string, number> = {}
-  for (const [teamId, deltas] of Object.entries(teamDeltas)) {
+  return Object.entries(teamDeltas).map(([teamId, deltas]) => {
     const avg = deltas.reduce((s, d) => s + d, 0) / deltas.length
-    if (Math.abs(avg) > 0.01) {
-      biases[teamId] = Math.round(avg * 100) / 100
+    const rounded = Math.round(avg * 100) / 100
+    const confidence: HumanBiasSummary['confidence'] = deltas.length >= 3 ? 'reliable' : deltas.length >= 2 ? 'low' : 'insufficient'
+    return {
+      teamId,
+      samples: deltas.length,
+      avg: rounded,
+      confidence,
+      qualified: confidence !== 'insufficient' && Math.abs(rounded) > 0.01,
     }
+  })
+}
+
+export function computeHumanBiases(): Record<string, number> {
+  const result: Record<string, number> = {}
+  for (const entry of computeHumanBiasData()) {
+    if (entry.qualified) result[entry.teamId] = entry.avg
   }
-  return biases
+  return result
+}
+
+export interface ModelCalibration {
+  model: 'A' | 'B' | 'C'
+  homeScale: number
+  awayScale: number
+  matchCount: number
+}
+
+export function computeCalibration(): ModelCalibration[] {
+  const results = getResults()
+  const lockedPreds = getLockedPredictions()
+
+  return (['A', 'B', 'C'] as const).map(model => {
+    const pairs = results.flatMap(r => {
+      const locked = lockedPreds.find(p => p.fixture_id === r.fixture_id && p.model === model)
+      if (!locked || locked.home_goals <= 0 || locked.away_goals <= 0) return []
+      return [{ predHome: locked.home_goals, predAway: locked.away_goals, actHome: r.home_goals, actAway: r.away_goals }]
+    })
+
+    if (pairs.length < 3) return { model, homeScale: 1, awayScale: 1, matchCount: pairs.length }
+
+    const homeScale = pairs.reduce((s, p) => s + p.actHome / p.predHome, 0) / pairs.length
+    const awayScale = pairs.reduce((s, p) => s + p.actAway / p.predAway, 0) / pairs.length
+
+    return {
+      model,
+      homeScale: Math.round(Math.min(2, Math.max(0.5, homeScale)) * 100) / 100,
+      awayScale: Math.round(Math.min(2, Math.max(0.5, awayScale)) * 100) / 100,
+      matchCount: pairs.length,
+    }
+  })
 }
 
 export function getBestModel(): 'A' | 'B' | 'C' | null {
@@ -436,4 +465,56 @@ export function getBestModel(): 'A' | 'B' | 'C' | null {
   const withData = metrics.filter(m => m.total > 0)
   if (!withData.length) return null
   return withData.sort((a, b) => b.accuracy - a.accuracy)[0].model
+}
+
+// --- Pool Recommendations (immutable snapshots, written once per fixture) ---
+
+export interface PoolRecommendation {
+  fixture_id: string
+  recommended_home: number
+  recommended_away: number
+  recommended_model: 'A' | 'B' | 'C'
+  recommendation_reason: string
+  generated_at: string
+}
+
+const POOL_RECS_KEY = 'wc26_pool_recs'
+
+export function getPoolRecommendations(): PoolRecommendation[] {
+  return load<PoolRecommendation[]>(POOL_RECS_KEY, [])
+}
+
+export function getPoolRecommendation(fixtureId: string): PoolRecommendation | undefined {
+  return getPoolRecommendations().find(r => r.fixture_id === fixtureId)
+}
+
+// ── Squad Adjustments ─────────────────────────────────────────────────────────
+import type { SquadAdjustment } from './squad-adjustments'
+
+export function getSquadAdjustments(fixtureId?: string): SquadAdjustment[] {
+  const all = load<SquadAdjustment[]>(KEYS.squadAdjustments, [])
+  return fixtureId ? all.filter(a => a.fixture_id === fixtureId) : all
+}
+
+export function saveSquadAdjustment(adj: Omit<SquadAdjustment, 'id' | 'created_at'>) {
+  const all = getSquadAdjustments()
+  const full: SquadAdjustment = {
+    ...adj,
+    id: `sqadj-${adj.fixture_id}-${Date.now()}`,
+    created_at: new Date().toISOString(),
+  }
+  save(KEYS.squadAdjustments, [...all, full])
+  return full
+}
+
+export function deleteSquadAdjustment(id: string) {
+  save(KEYS.squadAdjustments, getSquadAdjustments().filter(a => a.id !== id))
+}
+
+// Write-once: if a recommendation already exists for this fixture, do not overwrite it.
+export function savePoolRecommendation(rec: Omit<PoolRecommendation, 'generated_at'>) {
+  const existing = getPoolRecommendations()
+  if (existing.some(r => r.fixture_id === rec.fixture_id)) return
+  const full: PoolRecommendation = { ...rec, generated_at: new Date().toISOString() }
+  save(POOL_RECS_KEY, [...existing, full])
 }

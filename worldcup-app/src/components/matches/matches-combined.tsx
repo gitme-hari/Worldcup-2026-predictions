@@ -1,10 +1,14 @@
-import { ResultsEntry } from '@/components/results/results-entry'
+import { MatchList } from './match-list'
 
-export function MatchesCombined() {
+interface Props {
+  focusFixtureId?: string
+}
+
+export function MatchesCombined({ focusFixtureId }: Props) {
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-bold text-zinc-900">Matches & Results</h1>
-      <ResultsEntry />
+      <MatchList focusFixtureId={focusFixtureId} />
     </div>
   )
 }
