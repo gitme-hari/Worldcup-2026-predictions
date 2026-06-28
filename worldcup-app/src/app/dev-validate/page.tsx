@@ -1,0 +1,173 @@
+'use client'
+// TEMPORARY dev-only validation page — delete after inspection.
+// Reads real localStorage data and runs the full learning pipeline.
+// Visit /dev-validate in the browser to see the report.
+
+import { useEffect, useState } from 'react'
+import {
+  getFixtures, getTeams, getResults, getLockedPredictions,
+  getPoolRecommendations, getHumanPredictions,
+} from '@/lib/store'
+import { buildTeamAdjustments } from '@/lib/learning-layer'
+import { computeGroupStandings, computeQualificationStatus } from '@/lib/team-stats'
+import { generateAllReviews } from '@/lib/match-review'
+import { buildBlindSpotProfile } from '@/lib/failure-classifier'
+import { generateLearningSignals, getApplicableSignals } from '@/lib/learning-signals'
+import { buildExactScoreProfile } from '@/lib/exact-score-analysis'
+import type { QualificationStatus } from '@/lib/team-stats'
+
+export default function DevValidatePage() {
+  const [report, setReport] = useState<object | null>(null)
+
+  useEffect(() => {
+    const fixtures   = getFixtures()
+    const teams      = getTeams()
+    const results    = getResults()
+    const locked     = getLockedPredictions()
+    const poolRecs   = getPoolRecommendations()
+    const humanPreds = getHumanPredictions()
+
+    const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
+
+    // Build adjustments + qual map
+    const { SEED_PREDICTIONS } = require('@/lib/seed-data')
+    const adjustments = buildTeamAdjustments(teams, fixtures, results, SEED_PREDICTIONS)
+    const standings   = computeGroupStandings(fixtures, results)
+    const qualMap: Record<string, QualificationStatus> = {}
+    for (const rows of Object.values(standings)) {
+      for (const row of rows) {
+        qualMap[row.teamId] = computeQualificationStatus(row.teamId, rows, row.played)
+      }
+    }
+
+    // Generate reviews
+    const reviews = generateAllReviews({
+      fixtures, teams, lockedPredictions: locked,
+      poolRecommendations: poolRecs, results, adjustments, qualMap,
+    })
+
+    // Find Colombia vs Ivory Coast (col v civ)
+    const colCivReview = reviews.find(r => {
+      const fix = fixtures.find(f => f.id === r.fixtureId)
+      if (!fix) return false
+      const homeId = fix.home_team_id
+      const awayId = fix.away_team_id
+      return (
+        (homeId === 'col' || awayId === 'col') &&
+        (homeId === 'civ' || awayId === 'civ')
+      )
+    })
+
+    // Human pred for col-civ (for comment)
+    const colCivHuman = colCivReview
+      ? humanPreds.find(h => h.fixture_id === colCivReview.fixtureId)
+      : null
+
+    // Learning pipeline
+    const blindSpotProfile  = buildBlindSpotProfile(reviews.map(r => ({ category: r.blindSpot })))
+    const allSignals        = generateLearningSignals(reviews)
+    const applicableSignals = getApplicableSignals(allSignals)
+    const exactProfile      = buildExactScoreProfile(reviews)
+
+    // Override stats
+    const overrides    = reviews.filter(r => r.overridden)
+    const succeeded    = overrides.filter(r => r.verdict === 'Override succeeded')
+    const failed       = overrides.filter(r => r.verdict === 'Override failed')
+    const netDelta     = overrides.reduce((s, r) => s + (r.deltaVsEngine ?? 0), 0)
+
+    // Missing data warnings
+    const warnings: string[] = []
+    if (results.length === 0)  warnings.push('No results in localStorage — enter match scores first')
+    if (locked.length === 0)   warnings.push('No locked predictions — lock picks in Dashboard first')
+    if (poolRecs.length === 0) warnings.push('No pool recommendations — view a match in Dashboard to generate')
+    if (reviews.length === 0)  warnings.push('No match reviews generated — need both a result AND a locked prediction per fixture')
+    if (overrides.length === 0) warnings.push('No custom overrides found — all picks accepted engine recommendations')
+    if (allSignals.filter(s => s.strength === 'Strong').length === 0)
+      warnings.push('No Strong learning signals — need 5+ occurrences of same blind spot pattern')
+    if (!colCivReview) warnings.push('Colombia vs Ivory Coast not found — either not played or no locked prediction for that fixture')
+
+    setReport({
+      dataAvailable: {
+        fixtures: fixtures.length,
+        completedResults: results.length,
+        lockedPredictions: locked.length,
+        poolRecommendations: poolRecs.length,
+        humanPredictions: humanPreds.length,
+      },
+      matchReviewsGenerated: reviews.length,
+      overrideStats: {
+        total: overrides.length,
+        succeeded: succeeded.length,
+        failed: failed.length,
+        noChange: overrides.length - succeeded.length - failed.length,
+        netDeltaVsEngine: netDelta,
+        avgPerOverride: overrides.length > 0
+          ? Math.round((netDelta / overrides.length) * 100) / 100
+          : null,
+        overrideList: overrides.map(r => ({
+          match: `${r.homeCode} v ${r.awayCode}`,
+          engine: r.engineH !== null ? `${r.engineH}–${r.engineA}` : 'no rec',
+          myPick: `${r.myH}–${r.myA}`,
+          actual: `${r.actualH}–${r.actualA}`,
+          myPts: r.myPts,
+          enginePts: r.enginePts,
+          delta: r.deltaVsEngine,
+          reason: r.overrideReason,
+          verdict: r.verdict,
+        })),
+      },
+      colombiaIvoryCoast: colCivReview ? {
+        fixtureId: colCivReview.fixtureId,
+        match: `${colCivReview.homeCode} v ${colCivReview.awayCode}`,
+        engineRec: colCivReview.engineH !== null ? `${colCivReview.engineH}–${colCivReview.engineA}` : 'no rec',
+        myPick: `${colCivReview.myH}–${colCivReview.myA}`,
+        actual: `${colCivReview.actualH}–${colCivReview.actualA}`,
+        myPts: colCivReview.myPts,
+        enginePts: colCivReview.enginePts,
+        deltaVsEngine: colCivReview.deltaVsEngine,
+        overridden: colCivReview.overridden,
+        overrideReason: colCivReview.overrideReason,
+        humanComment: colCivHuman?.comment ?? null,
+        verdict: colCivReview.verdict,
+        blindSpot: colCivReview.blindSpot,
+        lesson: colCivReview.lesson,
+        evidence: colCivReview.evidence,
+      } : null,
+      blindSpotProfile,
+      learningSignals: {
+        total: allSignals.length,
+        applicable: applicableSignals.length,
+        all: allSignals,
+        applicableOnly: applicableSignals,
+      },
+      exactScoreProfile: exactProfile,
+      allReviews: reviews.map(r => ({
+        match: `${r.homeCode} v ${r.awayCode}`,
+        engine: r.engineH !== null ? `${r.engineH}–${r.engineA}` : 'no rec',
+        myPick: `${r.myH}–${r.myA}`,
+        actual: `${r.actualH}–${r.actualA}`,
+        myPts: r.myPts,
+        enginePts: r.enginePts,
+        delta: r.deltaVsEngine,
+        overridden: r.overridden,
+        verdict: r.verdict,
+        blindSpot: r.blindSpot,
+      })),
+      warnings,
+    })
+  }, [])
+
+  if (!report) return (
+    <div className="p-8 font-mono text-sm text-zinc-500">Running learning pipeline against localStorage…</div>
+  )
+
+  return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <h1 className="text-lg font-bold mb-1">Phase A2 — Real Data Validation</h1>
+      <p className="text-xs text-zinc-400 mb-4">Reading from real localStorage. Delete this page after inspection.</p>
+      <pre className="bg-zinc-950 text-green-400 text-xs p-4 rounded-lg overflow-auto max-h-[80vh] whitespace-pre-wrap">
+        {JSON.stringify(report, null, 2)}
+      </pre>
+    </div>
+  )
+}
