@@ -145,7 +145,7 @@ function Bracket({ fm, tm }: { fm: Record<string, SeedFixture>; tm: Record<strin
       {/* Header row */}
       <div className="flex mb-1.5">
         {HDR.map((h, i) => (
-          <div key={i} style={{ width: h.w, flexShrink: 0 }}
+          <div key={i} style={{ width: h.w, flexShrink: 0, overflow: 'visible' }}
             className="text-center text-[9px] font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap">
             {h.label}
           </div>
@@ -216,7 +216,7 @@ export function KnockoutBracket() {
 
   return (
     <div className="-mx-3 px-3 overflow-x-auto pb-4 select-none">
-      <div style={{ minWidth: 1292 }}>
+      <div style={{ minWidth: 1300 }}>
         <Bracket fm={fm} tm={tm} />
       </div>
       <p className="text-[10px] text-zinc-400 mt-2 text-center lg:hidden">Scroll left/right to see full bracket</p>
