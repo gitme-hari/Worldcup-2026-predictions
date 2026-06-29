@@ -1,46 +1,13 @@
 'use client'
 import { useState, useEffect } from 'react'
 import {
-  getTeams, getFixtures, getPredictions, getResult, getOverride,
-  getBracketOverrides, saveBracketOverride,
+  getTeams, getFixtures, getResult, getBracketOverrides, saveBracketOverride,
 } from '@/lib/store'
-import {
-  computeGroupStandings, engineScore,
-  computeQualificationStatus, computeThirdPlaceRanking,
-} from '@/lib/models'
-import type { QualificationStatus } from '@/lib/models'
-import type { SeedTeam } from '@/lib/seed-data'
+import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
+import { stageLabel } from '@/lib/seed-data'
 import { Modal } from '@/components/ui/modal'
 
-// ── WC26 official R32 bracket seeding ─────────────────────────────────────────
-// 12 group winners (W) + 12 runners-up (R) + 8 best third-place (T) = 32 teams
-// The 8 third-place slots are pre-assigned based on which groups they come from
-// per the official FIFA WC26 bracket draw published before the tournament.
-//
-// Matchup format: { id, homeSeed, awaySeed }
-// Seeds: 'W_A' = Group A winner, 'R_B' = Group B runner-up, 'T_1' = 1st best third, etc.
-
-const R32_PAIRS: Array<{ id: string; home: string; away: string }> = [
-  { id: 'r32-1',  home: 'W_A', away: 'R_B' },
-  { id: 'r32-2',  home: 'W_C', away: 'R_D' },
-  { id: 'r32-3',  home: 'W_E', away: 'R_F' },
-  { id: 'r32-4',  home: 'W_G', away: 'R_H' },
-  { id: 'r32-5',  home: 'W_I', away: 'R_J' },
-  { id: 'r32-6',  home: 'W_K', away: 'R_L' },
-  { id: 'r32-7',  home: 'W_B', away: 'R_A' },
-  { id: 'r32-8',  home: 'W_D', away: 'R_C' },
-  { id: 'r32-9',  home: 'W_F', away: 'R_E' },
-  { id: 'r32-10', home: 'W_H', away: 'R_G' },
-  { id: 'r32-11', home: 'W_J', away: 'R_I' },
-  { id: 'r32-12', home: 'W_L', away: 'R_K' },
-  // Third-place slots: assigned to best 8 third-place teams in ranked order
-  { id: 'r32-13', home: 'T_1',  away: 'T_2'  },
-  { id: 'r32-14', home: 'T_3',  away: 'T_4'  },
-  { id: 'r32-15', home: 'T_5',  away: 'T_6'  },
-  { id: 'r32-16', home: 'T_7',  away: 'T_8'  },
-]
-
-// ── Slot state ────────────────────────────────────────────────────────────────
+// ── Team slot component ───────────────────────────────────────────────────────
 
 type SlotStatus = 'confirmed' | 'projected' | 'tbd'
 
@@ -48,8 +15,6 @@ interface ResolvedSlot {
   team: SeedTeam | null
   status: SlotStatus
 }
-
-// ── Team slot component ───────────────────────────────────────────────────────
 
 function TeamSlot({
   slot,
@@ -63,7 +28,6 @@ function TeamSlot({
   const borderCls =
     isWinner        ? 'border-emerald-300 bg-emerald-50' :
     !slot.team      ? 'border-zinc-100 bg-zinc-50'       :
-    slot.status === 'projected' ? 'border-zinc-200 bg-white' :
                       'border-zinc-200 bg-white'
 
   return (
@@ -92,170 +56,108 @@ function TeamSlot({
 }
 
 function MatchupCard({
+  fix,
   homeSlot,
   awaySlot,
-  homeId,
-  awayId,
   winnerId,
   onOverride,
 }: {
+  fix: SeedFixture
   homeSlot: ResolvedSlot
   awaySlot: ResolvedSlot
-  homeId: string
-  awayId: string
   winnerId: string | null
-  onOverride: (slotId: string) => void
+  onOverride: (fixtureId: string, slot: 'home' | 'away') => void
 }) {
   return (
     <div className="rounded border border-zinc-200 bg-white p-1 min-w-[120px]">
-      <TeamSlot slot={homeSlot} isWinner={winnerId === homeSlot.team?.id} onClick={() => onOverride(homeId)} />
+      <TeamSlot slot={homeSlot} isWinner={winnerId === homeSlot.team?.id} onClick={() => onOverride(fix.id, 'home')} />
       <div className="my-0.5 border-t border-zinc-100" />
-      <TeamSlot slot={awaySlot} isWinner={winnerId === awaySlot.team?.id} onClick={() => onOverride(awayId)} />
+      <TeamSlot slot={awaySlot} isWinner={winnerId === awaySlot.team?.id} onClick={() => onOverride(fix.id, 'away')} />
     </div>
   )
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+const STAGE_ORDER = ['r32', 'r16', 'qf', 'sf', 'final'] as const
+
 export function KnockoutBracket() {
   const [mounted, setMounted]           = useState(false)
-  const [overrideSlot, setOverrideSlot] = useState<string | null>(null)
-  const [overrides, setOverrides]       = useState<Record<string, string>>({})
+  const [overrideTarget, setOverrideTarget] = useState<{ fixtureId: string; slot: 'home' | 'away' } | null>(null)
+  const [bracketOverrides, setBracketOverrides] = useState<Record<string, string>>({})
 
   useEffect(() => {
     setMounted(true)
-    setOverrides(getBracketOverrides())
+    setBracketOverrides(getBracketOverrides())
   }, [])
 
   if (!mounted) return <div className="h-96 animate-pulse rounded-lg bg-zinc-100" />
 
-  const teams       = getTeams()
-  const fixtures    = getFixtures()
-  const predictions = getPredictions()
+  const teams    = getTeams()
+  const teamMap  = Object.fromEntries(teams.map(t => [t.id, t]))
+  const fixtures = getFixtures()
 
-  const getScore = (fid: string) => {
-    const r = getResult(fid)
-    if (r) return { home: r.home_goals, away: r.away_goals }
-    const ovr = getOverride(fid)
-    if (ovr) return { home: ovr.home_goals, away: ovr.away_goals }
-    return engineScore(predictions, fid)
-  }
+  const knockoutFixtures = fixtures.filter(f => f.stage !== 'group')
 
-  const standings    = computeGroupStandings(fixtures as any, teams, getScore)
-  const statusMap    = computeQualificationStatus(standings)
-  const thirds       = computeThirdPlaceRanking(standings)
-
-  // Build lookup: seed string → { team, status }
-  function seedToSlot(seed: string): ResolvedSlot {
-    // Manual override wins
-    if (overrides[seed]) {
-      const t = teams.find(t => t.id === overrides[seed]) ?? null
+  function resolveSlot(fixtureId: string, slot: 'home' | 'away'): ResolvedSlot {
+    const key = `${fixtureId}:${slot}`
+    if (bracketOverrides[key]) {
+      const t = teamMap[bracketOverrides[key]] ?? null
       return { team: t, status: 'confirmed' }
     }
-
-    if (seed.startsWith('W_') || seed.startsWith('R_')) {
-      const group = seed.slice(2)
-      const groupStandings = standings[group] ?? []
-      const rank = seed.startsWith('W_') ? 0 : 1
-      const s = groupStandings[rank]
-      if (!s) return { team: null, status: 'tbd' }
-      const st = statusMap[s.team.id]
-      const slotStatus: SlotStatus =
-        st === 'confirmed' ? 'confirmed' :
-        st === 'projected_top2' ? 'projected' : 'tbd'
-      return { team: s.team as SeedTeam, status: slotStatus }
-    }
-
-    if (seed.startsWith('T_')) {
-      const rank = parseInt(seed.slice(2)) - 1
-      const t = thirds[rank]
-      if (!t) return { team: null, status: 'tbd' }
-      const slotStatus: SlotStatus = t.qualifies ? 'projected' : 'tbd'
-      return { team: t.team as SeedTeam, status: slotStatus }
-    }
-
-    return { team: null, status: 'tbd' }
+    const fix = knockoutFixtures.find(f => f.id === fixtureId)
+    if (!fix) return { team: null, status: 'tbd' }
+    const teamId = slot === 'home' ? fix.home_team_id : fix.away_team_id
+    if (!teamId) return { team: null, status: 'tbd' }
+    const team = teamMap[teamId] ?? null
+    // R32 teams are known from draw; later rounds are confirmed only after a result is entered
+    const hasResult = !!getResult(fixtureId)
+    const status: SlotStatus = fix.stage === 'r32' ? 'projected' : hasResult ? 'confirmed' : 'projected'
+    return { team, status }
   }
 
-  // Build R32
-  type Matchup = {
-    id: string
-    homeSlot: ResolvedSlot; awaySlot: ResolvedSlot
-    homeId: string; awayId: string
-    winnerSlot: string; winnerId: string | null
-  }
-
-  const r32: Matchup[] = R32_PAIRS.map(p => {
-    const homeId    = `${p.id}-home`
-    const awayId    = `${p.id}-away`
-    const winnerSlot = `${p.id}-winner`
-    const homeSlot   = seedToSlot(overrides[homeId] ? homeId : p.home)
-    const awaySlot   = seedToSlot(overrides[awayId] ? awayId : p.away)
-    const winnerId   = overrides[winnerSlot] ?? null
-    return { id: p.id, homeSlot, awaySlot, homeId, awayId, winnerSlot, winnerId }
-  })
-
-  // Build progressive rounds from R32 winners
-  function buildRound(prev: Matchup[], roundPrefix: string): Matchup[] {
-    const result: Matchup[] = []
-    for (let i = 0; i < prev.length; i += 2) {
-      const a = prev[i]; const b = prev[i + 1]
-      if (!a || !b) break
-      const id         = `${roundPrefix}-${Math.floor(i / 2) + 1}`
-      const homeId     = `${id}-home`
-      const awayId     = `${id}-away`
-      const winnerSlot = `${id}-winner`
-      const winnerId   = overrides[winnerSlot] ?? null
-
-      const resolveFromPrev = (m: Matchup): ResolvedSlot => {
-        if (overrides[m.homeId + '-override']) {
-          const t = teams.find(t => t.id === overrides[m.homeId + '-override']) ?? null
-          return { team: t, status: 'confirmed' }
-        }
-        if (m.winnerId) {
-          const t = teams.find(t => t.id === m.winnerId) ?? null
-          return { team: t, status: 'confirmed' }
-        }
-        // Both teams TBD → slot is TBD; if both projected → show TBD
-        return { team: null, status: 'tbd' }
-      }
-
-      const homeSlot = overrides[homeId] ? { team: teams.find(t => t.id === overrides[homeId]) ?? null, status: 'confirmed' as SlotStatus } : resolveFromPrev(a)
-      const awaySlot = overrides[awayId] ? { team: teams.find(t => t.id === overrides[awayId]) ?? null, status: 'confirmed' as SlotStatus } : resolveFromPrev(b)
-
-      result.push({ id, homeSlot, awaySlot, homeId, awayId, winnerSlot, winnerId })
+  function getWinnerId(fix: SeedFixture): string | null {
+    // Actual result wins
+    const result = getResult(fix.id)
+    if (result) {
+      if (result.home_goals > result.away_goals) return fix.home_team_id || null
+      if (result.away_goals > result.home_goals) return fix.away_team_id || null
+      return null // draw (AET/pens — user sets manually)
     }
-    return result
+    // Fall back to manual bracket pick
+    return bracketOverrides[`${fix.id}:winner`] ?? null
   }
 
-  const r16    = buildRound(r32, 'r16')
-  const qf     = buildRound(r16, 'qf')
-  const sf     = buildRound(qf, 'sf')
-  const final  = buildRound(sf, 'final')
+  const rounds = STAGE_ORDER.map(stage => ({
+    label: stageLabel(stage),
+    matchups: knockoutFixtures.filter(f => f.stage === stage),
+  })).filter(r => r.matchups.length > 0)
 
-  const rounds = [
-    { label: 'Round of 32', matchups: r32 },
-    { label: 'Round of 16', matchups: r16 },
-    { label: 'Quarter-Finals', matchups: qf },
-    { label: 'Semi-Finals', matchups: sf },
-    { label: 'Final', matchups: final },
-  ]
+  // Add third-place if present
+  const thirdPlace = knockoutFixtures.filter(f => f.stage === 'third_place')
+  if (thirdPlace.length) {
+    rounds.splice(rounds.length - 1, 0, { label: stageLabel('third_place'), matchups: thirdPlace })
+  }
 
-  const handleOverride = (slotId: string) => setOverrideSlot(slotId)
+  const handleOverride = (fixtureId: string, slot: 'home' | 'away') =>
+    setOverrideTarget({ fixtureId, slot })
 
   const handleSetTeam = (teamId: string) => {
-    if (!overrideSlot) return
-    saveBracketOverride(overrideSlot, teamId)
-    setOverrides(prev => ({ ...prev, [overrideSlot]: teamId }))
-    setOverrideSlot(null)
+    if (!overrideTarget) return
+    const key = `${overrideTarget.fixtureId}:${overrideTarget.slot}`
+    saveBracketOverride(key, teamId)
+    setBracketOverrides(prev => ({ ...prev, [key]: teamId }))
+    setOverrideTarget(null)
   }
 
-  const champion = final[0]?.winnerId ? teams.find(t => t.id === final[0].winnerId) : null
+  const finalFix  = knockoutFixtures.find(f => f.stage === 'final')
+  const championId = finalFix ? getWinnerId(finalFix) : null
+  const champion   = championId ? teamMap[championId] : null
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-zinc-400">
-        Click any slot to set the advancing team manually. Projected teams auto-fill from engine standings.
+        Click any slot to manually set the advancing team. Results entered in Matches auto-advance winners.
       </p>
 
       {/* Legend */}
@@ -271,14 +173,13 @@ export function KnockoutBracket() {
           <div key={round.label}>
             <h3 className="mb-2 text-xs font-semibold text-zinc-500 uppercase tracking-wide">{round.label}</h3>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-              {round.matchups.map(m => (
+              {round.matchups.map(fix => (
                 <MatchupCard
-                  key={m.id}
-                  homeSlot={m.homeSlot}
-                  awaySlot={m.awaySlot}
-                  homeId={m.homeId}
-                  awayId={m.awayId}
-                  winnerId={m.winnerId}
+                  key={fix.id}
+                  fix={fix}
+                  homeSlot={resolveSlot(fix.id, 'home')}
+                  awaySlot={resolveSlot(fix.id, 'away')}
+                  winnerId={getWinnerId(fix)}
                   onOverride={handleOverride}
                 />
               ))}
@@ -295,14 +196,13 @@ export function KnockoutBracket() {
               {round.label}
             </div>
             <div className="space-y-4" style={{ marginTop: ri > 0 ? `${Math.pow(2, ri - 1) * 24}px` : 0 }}>
-              {round.matchups.map(m => (
+              {round.matchups.map(fix => (
                 <MatchupCard
-                  key={m.id}
-                  homeSlot={m.homeSlot}
-                  awaySlot={m.awaySlot}
-                  homeId={m.homeId}
-                  awayId={m.awayId}
-                  winnerId={m.winnerId}
+                  key={fix.id}
+                  fix={fix}
+                  homeSlot={resolveSlot(fix.id, 'home')}
+                  awaySlot={resolveSlot(fix.id, 'away')}
+                  winnerId={getWinnerId(fix)}
                   onOverride={handleOverride}
                 />
               ))}
@@ -322,7 +222,7 @@ export function KnockoutBracket() {
       </div>
 
       {/* Override modal */}
-      <Modal open={!!overrideSlot} onClose={() => setOverrideSlot(null)} title="Select advancing team">
+      <Modal open={!!overrideTarget} onClose={() => setOverrideTarget(null)} title="Select advancing team">
         <div className="max-h-80 overflow-y-auto space-y-1">
           {teams.map(t => (
             <button

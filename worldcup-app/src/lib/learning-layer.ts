@@ -92,7 +92,7 @@ export function buildTeamAdjustments(
       return {
         fixtureId: f.id,
         opponent: opponent?.name ?? 'Unknown',
-        matchday: f.matchday,
+        matchday: f.matchday ?? 0,
         weight: recencyWeight(idx, played.length),
         actualScored,
         expectedScored,

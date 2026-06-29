@@ -92,6 +92,7 @@ export function runMonteCarlo(iterations = 8000): TeamMCResult[] {
       const p = predMap[f.id]
       if (!p) return
       const result = simGroupMatch(p.hwp, p.dp, p.awp)
+      if (!f.group) return
       const h = groupStats[f.group][f.home_team_id]
       const a = groupStats[f.group][f.away_team_id]
       if (!h || !a) return

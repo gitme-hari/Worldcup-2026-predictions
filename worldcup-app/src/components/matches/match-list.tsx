@@ -7,6 +7,7 @@ import {
 import type { LockedPrediction } from '@/lib/store'
 import { formatDate } from '@/lib/utils'
 import type { SeedFixture, SeedTeam } from '@/lib/seed-data'
+import { stageLabel } from '@/lib/seed-data'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
@@ -131,11 +132,11 @@ function FinalCard({ fix, home, away, actualH, actualA, locked, onResultUpdated,
       <div className="flex items-center gap-2 mb-1.5">
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <span className="text-base leading-none">{home?.flag_url}</span>
-          <span className="text-sm font-semibold text-zinc-900 truncate">{home?.name}</span>
+          <span className="text-sm font-semibold text-zinc-900 truncate">{home?.name ?? 'TBD'}</span>
         </div>
         <span className="text-[10px] text-zinc-300 shrink-0">vs</span>
         <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
-          <span className="text-sm font-semibold text-zinc-900 truncate">{away?.name}</span>
+          <span className="text-sm font-semibold text-zinc-900 truncate">{away?.name ?? 'TBD'}</span>
           <span className="text-base leading-none">{away?.flag_url}</span>
         </div>
         <Badge variant="success" className="shrink-0 ml-1">Final</Badge>
@@ -143,7 +144,7 @@ function FinalCard({ fix, home, away, actualH, actualA, locked, onResultUpdated,
 
       {/* Meta row */}
       <div className="flex items-center gap-1.5 mb-2.5 text-[10px] text-zinc-400">
-        {fix.group && <span className="rounded border border-zinc-100 px-1 py-0.5">Grp {fix.group}</span>}
+        {fix.group ? <span className="rounded border border-zinc-100 px-1 py-0.5">Grp {fix.group}</span> : <span className="rounded border border-zinc-100 px-1 py-0.5">{stageLabel(fix.stage)}</span>}
         {fix.matchday && <span>MD{fix.matchday}</span>}
         <span>{formatDate(fix.kickoff_utc)}</span>
       </div>
@@ -257,11 +258,11 @@ function RowHeader({ fix, home, away, isExpanded, onToggle, state }: {
       <div className="flex items-center gap-2 px-3 py-2.5">
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <span className="text-base leading-none">{home?.flag_url}</span>
-          <span className="text-sm font-semibold text-zinc-900 truncate">{home?.name}</span>
+          <span className="text-sm font-semibold text-zinc-900 truncate">{home?.name ?? 'TBD'}</span>
         </div>
         <span className="text-[10px] text-zinc-300 shrink-0">vs</span>
         <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
-          <span className="text-sm font-semibold text-zinc-900 truncate">{away?.name}</span>
+          <span className="text-sm font-semibold text-zinc-900 truncate">{away?.name ?? 'TBD'}</span>
           <span className="text-base leading-none">{away?.flag_url}</span>
         </div>
         <div className="shrink-0 ml-1">{stateBadge}</div>
@@ -270,7 +271,7 @@ function RowHeader({ fix, home, away, isExpanded, onToggle, state }: {
         </div>
       </div>
       <div className="flex items-center gap-1.5 px-3 pb-2 text-[10px] text-zinc-400">
-        {fix.group && <span className="rounded border border-zinc-100 px-1 py-0.5">Grp {fix.group}</span>}
+        {fix.group ? <span className="rounded border border-zinc-100 px-1 py-0.5">Grp {fix.group}</span> : <span className="rounded border border-zinc-100 px-1 py-0.5">{stageLabel(fix.stage)}</span>}
         {fix.matchday && <span>MD{fix.matchday}</span>}
         <span>{formatDate(fix.kickoff_utc)}</span>
       </div>
@@ -363,8 +364,8 @@ export function MatchList({ focusFixtureId }: MatchListProps = {}) {
 
       <div className="space-y-1.5">
         {filtered.map(f => {
-          const home           = teamMap[f.home_team_id]
-          const away           = teamMap[f.away_team_id]
+          const home           = f.home_team_id ? teamMap[f.home_team_id] : undefined
+          const away           = f.away_team_id ? teamMap[f.away_team_id] : undefined
           const storedResult   = resultMap[f.id]
           const inlineResult   = savedResults[f.id]
           const result         = storedResult ?? (inlineResult ? { ...inlineResult, fixture_id: f.id } : undefined)

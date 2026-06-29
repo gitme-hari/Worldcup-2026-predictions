@@ -72,17 +72,37 @@ export const SEED_TEAMS: SeedTeam[] = [
   { id: 'pan', name: 'Panama',        code: 'PAN', group: 'L', flag_url: '🇵🇦', elo_rating: 1620 },
 ]
 
+export type FixtureStage = 'group' | 'r32' | 'r16' | 'qf' | 'sf' | 'final' | 'third_place'
+
+export function stageLabel(stage: FixtureStage): string {
+  switch (stage) {
+    case 'group':       return 'Group Stage'
+    case 'r32':         return 'Round of 32'
+    case 'r16':         return 'Round of 16'
+    case 'qf':          return 'Quarter-Final'
+    case 'sf':          return 'Semi-Final'
+    case 'final':       return 'Final'
+    case 'third_place': return '3rd Place'
+  }
+}
+
 export interface SeedFixture {
   id: string
-  home_team_id: string
-  away_team_id: string
-  group: string
-  stage: 'group'
-  matchday: number
+  home_team_id: string   // '' = TBD (not yet determined)
+  away_team_id: string   // '' = TBD
+  group: string | null
+  stage: FixtureStage
+  matchday: number | null
   kickoff_utc: string
   venue: string
-  stadium?: string      // full stadium name, e.g. "MetLife Stadium"
-  altitude_m?: number   // metres above sea level; omit = unknown
+  stadium?: string
+  altitude_m?: number
+  homeSource?: string           // seed origin, e.g. 'W:r32-1', 'W_A', 'T_1'
+  awaySource?: string
+  winnerAdvancesTo?: string     // fixture id where winner becomes home/away team
+  winnerSlot?: 'home' | 'away'
+  loserAdvancesTo?: string      // sf only → third-place fixture
+  loserSlot?: 'home' | 'away'
 }
 
 // Official FIFA 2026 group stage schedule — 72 fixtures, verified from FIFA schedule
@@ -171,6 +191,55 @@ export const SEED_FIXTURES: SeedFixture[] = [
   { id:'group-L-m4', home_team_id:'pan', away_team_id:'cro', group:'L', stage:'group', matchday:2, kickoff_utc:'2026-06-23T22:00:00Z', venue:'Toronto' },
   { id:'group-L-m5', home_team_id:'pan', away_team_id:'eng', group:'L', stage:'group', matchday:3, kickoff_utc:'2026-06-27T20:00:00Z', venue:'New Jersey' },
   { id:'group-L-m6', home_team_id:'cro', away_team_id:'gha', group:'L', stage:'group', matchday:3, kickoff_utc:'2026-06-27T20:00:00Z', venue:'Philadelphia' },
+]
+
+// ─── Knockout fixtures ────────────────────────────────────────────────────────
+// R32 teams are hardcoded from the official WC2026 bracket draw.
+// R16+ teams start as '' and are populated in store via knockoutTeams localStorage.
+export const KNOCKOUT_FIXTURES: SeedFixture[] = [
+  // Round of 32 — 16 matches
+  { id:'r32-1',  home_team_id:'rsa', away_team_id:'can', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-28T18:00:00Z', venue:'Kansas City',          homeSource:'W_A', awaySource:'W_B', winnerAdvancesTo:'r16-1', winnerSlot:'home' },
+  { id:'r32-2',  home_team_id:'ned', away_team_id:'mar', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-28T21:00:00Z', venue:'Dallas',               homeSource:'W_F', awaySource:'W_C', winnerAdvancesTo:'r16-1', winnerSlot:'away' },
+  { id:'r32-3',  home_team_id:'ger', away_team_id:'par', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-29T18:00:00Z', venue:'Houston',              homeSource:'W_E', awaySource:'R_D', winnerAdvancesTo:'r16-2', winnerSlot:'home' },
+  { id:'r32-4',  home_team_id:'fra', away_team_id:'swe', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-29T21:00:00Z', venue:'New Jersey',           homeSource:'W_I', awaySource:'R_F', winnerAdvancesTo:'r16-2', winnerSlot:'away' },
+  { id:'r32-5',  home_team_id:'esp', away_team_id:'aut', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T16:00:00Z', venue:'Atlanta',              homeSource:'W_H', awaySource:'R_J', winnerAdvancesTo:'r16-3', winnerSlot:'home' },
+  { id:'r32-6',  home_team_id:'por', away_team_id:'cro', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T19:00:00Z', venue:'Boston',               homeSource:'W_K', awaySource:'R_L', winnerAdvancesTo:'r16-3', winnerSlot:'away' },
+  { id:'r32-7',  home_team_id:'bel', away_team_id:'sen', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T22:00:00Z', venue:'Seattle',              homeSource:'W_G', awaySource:'R_I', winnerAdvancesTo:'r16-4', winnerSlot:'home' },
+  { id:'r32-8',  home_team_id:'usa', away_team_id:'bih', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T01:00:00Z', venue:'Los Angeles',          homeSource:'W_D', awaySource:'R_B', winnerAdvancesTo:'r16-4', winnerSlot:'away' },
+  { id:'r32-9',  home_team_id:'bra', away_team_id:'jpn', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T18:00:00Z', venue:'Miami',                homeSource:'W_C', awaySource:'R_F', winnerAdvancesTo:'r16-5', winnerSlot:'home' },
+  { id:'r32-10', home_team_id:'civ', away_team_id:'nor', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T21:00:00Z', venue:'Philadelphia',         homeSource:'R_E', awaySource:'R_I', winnerAdvancesTo:'r16-5', winnerSlot:'away' },
+  { id:'r32-11', home_team_id:'mex', away_team_id:'ecu', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T00:00:00Z', venue:'Mexico City',          homeSource:'R_A', awaySource:'R_E', winnerAdvancesTo:'r16-6', winnerSlot:'home' },
+  { id:'r32-12', home_team_id:'eng', away_team_id:'cod', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T03:00:00Z', venue:'Toronto',              homeSource:'W_L', awaySource:'R_K', winnerAdvancesTo:'r16-6', winnerSlot:'away' },
+  { id:'r32-13', home_team_id:'aus', away_team_id:'egy', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T18:00:00Z', venue:'Vancouver',            homeSource:'T_1', awaySource:'T_2', winnerAdvancesTo:'r16-7', winnerSlot:'home' },
+  { id:'r32-14', home_team_id:'arg', away_team_id:'cpv', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T21:00:00Z', venue:'San Francisco Bay Area', homeSource:'W_J', awaySource:'R_H', winnerAdvancesTo:'r16-7', winnerSlot:'away' },
+  { id:'r32-15', home_team_id:'sui', away_team_id:'alg', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-03T00:00:00Z', venue:'Guadalajara',          homeSource:'R_B', awaySource:'R_J', winnerAdvancesTo:'r16-8', winnerSlot:'home' },
+  { id:'r32-16', home_team_id:'col', away_team_id:'gha', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-03T03:00:00Z', venue:'Monterrey',            homeSource:'W_K', awaySource:'R_L', winnerAdvancesTo:'r16-8', winnerSlot:'away' },
+
+  // Round of 16 — 8 matches (teams TBD, filled by winner progression)
+  { id:'r16-1', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-05T18:00:00Z', venue:'Dallas',        homeSource:'W:r32-1', awaySource:'W:r32-2', winnerAdvancesTo:'qf-1', winnerSlot:'home' },
+  { id:'r16-2', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-05T22:00:00Z', venue:'Houston',       homeSource:'W:r32-3', awaySource:'W:r32-4', winnerAdvancesTo:'qf-1', winnerSlot:'away' },
+  { id:'r16-3', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T18:00:00Z', venue:'Atlanta',       homeSource:'W:r32-5', awaySource:'W:r32-6', winnerAdvancesTo:'qf-2', winnerSlot:'home' },
+  { id:'r16-4', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T22:00:00Z', venue:'Los Angeles',   homeSource:'W:r32-7', awaySource:'W:r32-8', winnerAdvancesTo:'qf-2', winnerSlot:'away' },
+  { id:'r16-5', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T18:00:00Z', venue:'New Jersey',    homeSource:'W:r32-9', awaySource:'W:r32-10', winnerAdvancesTo:'qf-3', winnerSlot:'home' },
+  { id:'r16-6', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T22:00:00Z', venue:'Seattle',       homeSource:'W:r32-11', awaySource:'W:r32-12', winnerAdvancesTo:'qf-3', winnerSlot:'away' },
+  { id:'r16-7', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-08T18:00:00Z', venue:'Miami',         homeSource:'W:r32-13', awaySource:'W:r32-14', winnerAdvancesTo:'qf-4', winnerSlot:'home' },
+  { id:'r16-8', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-08T22:00:00Z', venue:'Boston',        homeSource:'W:r32-15', awaySource:'W:r32-16', winnerAdvancesTo:'qf-4', winnerSlot:'away' },
+
+  // Quarter-Finals — 4 matches
+  { id:'qf-1', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-11T18:00:00Z', venue:'Dallas',        homeSource:'W:r16-1', awaySource:'W:r16-2', winnerAdvancesTo:'sf-1', winnerSlot:'home' },
+  { id:'qf-2', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-11T22:00:00Z', venue:'Los Angeles',   homeSource:'W:r16-3', awaySource:'W:r16-4', winnerAdvancesTo:'sf-1', winnerSlot:'away' },
+  { id:'qf-3', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-12T18:00:00Z', venue:'New Jersey',    homeSource:'W:r16-5', awaySource:'W:r16-6', winnerAdvancesTo:'sf-2', winnerSlot:'home' },
+  { id:'qf-4', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-12T22:00:00Z', venue:'Houston',       homeSource:'W:r16-7', awaySource:'W:r16-8', winnerAdvancesTo:'sf-2', winnerSlot:'away' },
+
+  // Semi-Finals — 2 matches (losers go to third-place)
+  { id:'sf-1', home_team_id:'', away_team_id:'', group:null, stage:'sf', matchday:null, kickoff_utc:'2026-07-15T01:00:00Z', venue:'New Jersey', homeSource:'W:qf-1', awaySource:'W:qf-2', winnerAdvancesTo:'final', winnerSlot:'home', loserAdvancesTo:'third-place', loserSlot:'home' },
+  { id:'sf-2', home_team_id:'', away_team_id:'', group:null, stage:'sf', matchday:null, kickoff_utc:'2026-07-16T01:00:00Z', venue:'Dallas',     homeSource:'W:qf-3', awaySource:'W:qf-4', winnerAdvancesTo:'final', winnerSlot:'away', loserAdvancesTo:'third-place', loserSlot:'away' },
+
+  // Third-place play-off
+  { id:'third-place', home_team_id:'', away_team_id:'', group:null, stage:'third_place', matchday:null, kickoff_utc:'2026-07-19T18:00:00Z', venue:'Miami',     homeSource:'L:sf-1', awaySource:'L:sf-2' },
+
+  // Final
+  { id:'final', home_team_id:'', away_team_id:'', group:null, stage:'final', matchday:null, kickoff_utc:'2026-07-19T23:00:00Z', venue:'New Jersey', homeSource:'W:sf-1', awaySource:'W:sf-2' },
 ]
 
 // ─── Venue factors ────────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ function FormBlock({ fixture, home, away }: {
   const results  = getResults()
   const teams    = getTeams()
   const allStandings   = computeGroupStandings(fixtures, results)
-  const groupStandings = allStandings[fixture.group] ?? []
+  const groupStandings = allStandings[fixture.group ?? ''] ?? []
 
   const sides = [
     { team: home, id: fixture.home_team_id },
@@ -107,7 +107,7 @@ function DecisionSupportSection({ fixture, home, away, apiCtx }: {
   if (!rec) return null
 
   const allStandings   = computeGroupStandings(fixtures, results)
-  const groupStandings = allStandings[fixture.group] ?? []
+  const groupStandings = allStandings[fixture.group ?? ''] ?? []
   const matchday       = fixture.matchday ?? 1
   const homeStanding   = groupStandings.find(s => s.teamId === fixture.home_team_id)
   const awayStanding   = groupStandings.find(s => s.teamId === fixture.away_team_id)

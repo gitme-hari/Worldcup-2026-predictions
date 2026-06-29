@@ -227,7 +227,7 @@ function DecisionSupportCard({ rec, fix, home, away, learningAdjs }: {
   const fixtures = getFixtures()
   const results  = getResults()
   const allStandings   = computeGroupStandings(fixtures, results)
-  const groupStandings = allStandings[fix.group] ?? []
+  const groupStandings = allStandings[fix.group ?? ''] ?? []
   const matchday       = fix.matchday ?? 1
   const homeStanding   = groupStandings.find(s => s.teamId === fix.home_team_id)
   const awayStanding   = groupStandings.find(s => s.teamId === fix.away_team_id)
@@ -329,7 +329,7 @@ function UpcomingIntelligence() {
   for (const fix of fixtures) {
     const kickoff = new Date(fix.kickoff_utc).getTime()
     if (kickoff <= now || kickoff > horizon) continue
-    const groupStandings = allStandings[fix.group] ?? []
+    const groupStandings = allStandings[fix.group ?? ''] ?? []
     const matchday = fix.matchday ?? 1
     const homeQual = computeQualificationStatus(fix.home_team_id, groupStandings, matchday)
     const awayQual = computeQualificationStatus(fix.away_team_id, groupStandings, matchday)

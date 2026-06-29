@@ -46,6 +46,7 @@ export function computeGroupStandings(
   // Collect all teams per group
   const groupTeams: Record<string, string[]> = {}
   for (const fix of fixtures) {
+    if (!fix.group) continue
     if (!groupTeams[fix.group]) groupTeams[fix.group] = []
     if (!groupTeams[fix.group].includes(fix.home_team_id)) groupTeams[fix.group].push(fix.home_team_id)
     if (!groupTeams[fix.group].includes(fix.away_team_id)) groupTeams[fix.group].push(fix.away_team_id)
@@ -57,6 +58,7 @@ export function computeGroupStandings(
     const r = resultMap.get(fix.id)
     if (!r) continue
     const g = fix.group
+    if (!g) continue
     if (!records[g]) records[g] = {}
     for (const [tid, gf, ga] of [
       [fix.home_team_id, r.home_goals, r.away_goals],
