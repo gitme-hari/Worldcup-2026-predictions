@@ -1,23 +1,22 @@
 'use client'
 import { useState, useEffect, useMemo } from 'react'
 import { SyncErrorBanner } from '@/components/ui/sync-error-banner'
-import { KeyInsightsCard } from './key-insights-card'
-import { TabReview } from './tabs/tab-review'
-import { TabLearning } from './tabs/tab-learning'
-import { TabDiagnostics } from './tabs/tab-diagnostics'
+import { TabSummary } from './tabs/tab-summary'
+import { TabMatchLog } from './tabs/tab-match-log'
+import { TabTeamsRounds } from './tabs/tab-teams-rounds'
 import { computePerformanceData } from './performance-data'
 
 const TABS = [
-  { id: 'review',      label: 'Review' },
-  { id: 'learning',    label: 'Learning' },
-  { id: 'diagnostics', label: 'Diagnostics' },
+  { id: 'summary',  label: 'Summary' },
+  { id: 'log',      label: 'Match Log' },
+  { id: 'teams',    label: 'Teams & Rounds' },
 ] as const
 
 type TabId = typeof TABS[number]['id']
 
 export function PerformancePanel() {
   const [mounted, setMounted] = useState(false)
-  const [tab, setTab] = useState<TabId>('review')
+  const [tab, setTab] = useState<TabId>('summary')
 
   useEffect(() => setMounted(true), [])
 
@@ -32,10 +31,6 @@ export function PerformancePanel() {
     <div className="space-y-4">
       <SyncErrorBanner />
 
-      {/* Always-visible insights card */}
-      <KeyInsightsCard data={data} />
-
-      {/* Tab bar */}
       <div className="border-b border-zinc-200">
         <nav className="-mb-px flex gap-0">
           {TABS.map(t => (
@@ -55,11 +50,10 @@ export function PerformancePanel() {
         </nav>
       </div>
 
-      {/* Tab content */}
       <div className="min-h-[200px]">
-        {tab === 'review'      && <TabReview data={data} />}
-        {tab === 'learning'    && <TabLearning data={data} />}
-        {tab === 'diagnostics' && <TabDiagnostics data={data} />}
+        {tab === 'summary' && <TabSummary data={data} />}
+        {tab === 'log'     && <TabMatchLog data={data} />}
+        {tab === 'teams'   && <TabTeamsRounds data={data} />}
       </div>
     </div>
   )

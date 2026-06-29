@@ -4,6 +4,7 @@
 
 import { SEED_TEAMS, SEED_FIXTURES, KNOCKOUT_FIXTURES, SEED_PREDICTIONS } from './seed-data'
 import type { SeedTeam, SeedFixture, SeedPrediction } from './seed-data'
+import { resolveTournament } from './tournament-graph'
 import type { ActualResult, Override, ModelConfig, BonusPrediction, ModelMetric, HumanPrediction } from './types'
 import { brierScore, logLoss, getOutcome } from './models'
 
@@ -12,12 +13,10 @@ const KEYS = {
   results: 'wc26_results',
   overrides: 'wc26_overrides',
   bonus: 'wc26_bonus',
-  bracketOverrides: 'wc26_bracket_overrides',
   liveData: 'wc26_live_data',
   lockedPreds: 'wc26_locked_preds',
   humanPreds: 'wc26_human_preds',
   squadAdjustments: 'wc26_squad_adjustments',
-  knockoutTeams: 'wc26_knockout_teams',
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -44,32 +43,12 @@ export function getTeam(id: string): SeedTeam | undefined {
   return SEED_TEAMS.find(t => t.id === id)
 }
 
-// --- Knockout team progression ---
-// Key format: `${fixtureId}:home` or `${fixtureId}:away` → teamId
-export function getKnockoutTeams(): Record<string, string> {
-  return load<Record<string, string>>(KEYS.knockoutTeams, {})
-}
-
-export function setKnockoutTeam(fixtureId: string, slot: 'home' | 'away', teamId: string) {
-  const teams = getKnockoutTeams()
-  teams[`${fixtureId}:${slot}`] = teamId
-  save(KEYS.knockoutTeams, teams)
-}
-
-export function clearKnockoutTeam(fixtureId: string, slot: 'home' | 'away') {
-  const teams = getKnockoutTeams()
-  delete teams[`${fixtureId}:${slot}`]
-  save(KEYS.knockoutTeams, teams)
-}
-
 // --- Fixtures ---
+// Knockout team slots are derived from recorded results via the tournament graph.
+// There is no separate knockout-teams storage layer.
 export function getFixtures(): SeedFixture[] {
-  const knockoutTeams = getKnockoutTeams()
-  const knockout = KNOCKOUT_FIXTURES.map(f => ({
-    ...f,
-    home_team_id: knockoutTeams[`${f.id}:home`] ?? f.home_team_id,
-    away_team_id: knockoutTeams[`${f.id}:away`] ?? f.away_team_id,
-  }))
+  const results = getResults()
+  const knockout = resolveTournament(KNOCKOUT_FIXTURES, results)
   return [...SEED_FIXTURES, ...knockout]
 }
 
@@ -181,23 +160,7 @@ export function saveResult(result: Omit<ActualResult, 'id' | 'entered_at'>) {
   if (existing >= 0) results[existing] = full
   else results.push(full)
   save(KEYS.results, results)
-
-  // Auto-advance knockout winner (and loser for SF → third-place)
-  const fixture = KNOCKOUT_FIXTURES.find(f => f.id === result.fixture_id)
-  if (fixture && result.home_goals !== result.away_goals) {
-    const winnerId = result.home_goals > result.away_goals ? fixture.home_team_id : fixture.away_team_id
-    const loserId  = result.home_goals > result.away_goals ? fixture.away_team_id : fixture.home_team_id
-    // home_team_id on the static fixture may be empty for later rounds — use the stored team
-    const teams = getKnockoutTeams()
-    const resolvedHome = teams[`${fixture.id}:home`] ?? fixture.home_team_id
-    const resolvedAway = teams[`${fixture.id}:away`] ?? fixture.away_team_id
-    const resolvedWinner = result.home_goals > result.away_goals ? resolvedHome : resolvedAway
-    const resolvedLoser  = result.home_goals > result.away_goals ? resolvedAway : resolvedHome
-    if (fixture.winnerAdvancesTo && fixture.winnerSlot && resolvedWinner)
-      setKnockoutTeam(fixture.winnerAdvancesTo, fixture.winnerSlot, resolvedWinner)
-    if (fixture.loserAdvancesTo && fixture.loserSlot && resolvedLoser)
-      setKnockoutTeam(fixture.loserAdvancesTo, fixture.loserSlot, resolvedLoser)
-  }
+  // Knockout progression is derived at read-time via resolveTournament — nothing to propagate here.
 
   if (typeof window !== 'undefined') {
     import('./sync').then(({ syncResult }) => {
@@ -208,15 +171,7 @@ export function saveResult(result: Omit<ActualResult, 'id' | 'entered_at'>) {
 
 export function deleteResult(fixtureId: string) {
   save(KEYS.results, getResults().filter(r => r.fixture_id !== fixtureId))
-
-  // Reverse knockout team progression
-  const fixture = KNOCKOUT_FIXTURES.find(f => f.id === fixtureId)
-  if (fixture) {
-    if (fixture.winnerAdvancesTo && fixture.winnerSlot)
-      clearKnockoutTeam(fixture.winnerAdvancesTo, fixture.winnerSlot)
-    if (fixture.loserAdvancesTo && fixture.loserSlot)
-      clearKnockoutTeam(fixture.loserAdvancesTo, fixture.loserSlot)
-  }
+  // Knockout progression is derived at read-time — nothing to revert here.
 
   if (typeof window !== 'undefined') {
     import('./sync').then(({ deleteResultFromCloud }) => {
@@ -246,17 +201,6 @@ export function saveOverride(override: Omit<Override, 'id'>) {
 export function deleteOverride(fixtureId: string) {
   const overrides = getOverrides().filter(o => o.fixture_id !== fixtureId)
   save(KEYS.overrides, overrides)
-}
-
-// --- Bracket team overrides (knockout stage) ---
-export function getBracketOverrides(): Record<string, string> {
-  return load<Record<string, string>>(KEYS.bracketOverrides, {})
-}
-
-export function saveBracketOverride(slotKey: string, teamId: string) {
-  const overrides = getBracketOverrides()
-  overrides[slotKey] = teamId
-  save(KEYS.bracketOverrides, overrides)
 }
 
 // --- Bonus Predictions ---

@@ -6,7 +6,7 @@ export default function AnalysisPage() {
       <div>
         <h1 className="text-lg font-bold text-zinc-900">Performance</h1>
         <p className="text-xs text-zinc-500 mt-0.5">
-          Decision history, override intelligence, engine learning, and diagnostics.
+          What gives you the highest probability of scoring the most pool points?
         </p>
       </div>
       <PerformancePanel />

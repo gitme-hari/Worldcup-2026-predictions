@@ -86,6 +86,18 @@ export function stageLabel(stage: FixtureStage): string {
   }
 }
 
+// Describes which fixture a team comes from, and whether they were the winner or loser.
+export interface KnockoutSource {
+  fixture: string
+  type: 'winner' | 'loser'
+}
+
+// Describes where a team advances to after this fixture.
+export interface KnockoutTarget {
+  fixture: string
+  slot: 'home' | 'away'
+}
+
 export interface SeedFixture {
   id: string
   home_team_id: string   // '' = TBD (not yet determined)
@@ -97,12 +109,10 @@ export interface SeedFixture {
   venue: string
   stadium?: string
   altitude_m?: number
-  homeSource?: string           // seed origin, e.g. 'W:r32-1', 'W_A', 'T_1'
-  awaySource?: string
-  winnerAdvancesTo?: string     // fixture id where winner becomes home/away team
-  winnerSlot?: 'home' | 'away'
-  loserAdvancesTo?: string      // sf only → third-place fixture
-  loserSlot?: 'home' | 'away'
+  homeSource?: KnockoutSource   // which fixture/slot feeds the home team
+  awaySource?: KnockoutSource   // which fixture/slot feeds the away team
+  winnerAdvancesTo?: KnockoutTarget  // where the winner of this match goes
+  loserAdvancesTo?: KnockoutTarget   // where the loser goes (SF only → 3rd place)
 }
 
 // Official FIFA 2026 group stage schedule — 72 fixtures, verified from FIFA schedule
@@ -194,85 +204,134 @@ export const SEED_FIXTURES: SeedFixture[] = [
 ]
 
 // ─── Knockout fixtures ────────────────────────────────────────────────────────
-// R32 teams are confirmed from the official FIFA WC2026 bracket draw.
-// R16+ home_team_id/away_team_id start as '' and are populated via knockoutTeams
-// localStorage when results are entered. Kickoff times are UTC.
+// IDs match official FIFA match numbers M73–M104.
+// The tournament graph is encoded as typed source/target objects — not strings.
+// R32 teams are fixed from the bracket draw.
+// R16+ teams are resolved at runtime by walking the graph from recorded results.
 export const KNOCKOUT_FIXTURES: SeedFixture[] = [
-  // ── Round of 32 — M73-M88 (official FIFA numbering) ──────────────────────
-  // M73: Jun 28  (time TBC, ~18:00 UTC based on LA afternoon slot)
-  { id:'r32-1',  home_team_id:'rsa', away_team_id:'can', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-28T18:00:00Z', venue:'Los Angeles',            winnerAdvancesTo:'r16-2', winnerSlot:'home' },
-  // M74: Jun 29 16:30 ET = 20:30 UTC
-  { id:'r32-2',  home_team_id:'ger', away_team_id:'par', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-29T20:30:00Z', venue:'Boston',                 winnerAdvancesTo:'r16-1', winnerSlot:'home' },
-  // M75: Jun 29 21:00 ET = Jun 30 01:00 UTC
-  { id:'r32-3',  home_team_id:'ned', away_team_id:'mar', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T01:00:00Z', venue:'Monterrey',              winnerAdvancesTo:'r16-2', winnerSlot:'away' },
-  // M76: Jun 29 13:00 ET = 17:00 UTC
-  { id:'r32-4',  home_team_id:'bra', away_team_id:'jpn', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-29T17:00:00Z', venue:'Houston',                winnerAdvancesTo:'r16-3', winnerSlot:'home' },
-  // M77: Jun 30 17:00 ET = 21:00 UTC
-  { id:'r32-5',  home_team_id:'fra', away_team_id:'swe', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T21:00:00Z', venue:'New Jersey',             winnerAdvancesTo:'r16-1', winnerSlot:'away' },
-  // M78: Jun 30 13:00 ET = 17:00 UTC
-  { id:'r32-6',  home_team_id:'civ', away_team_id:'nor', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T17:00:00Z', venue:'Dallas',                 winnerAdvancesTo:'r16-3', winnerSlot:'away' },
-  // M79: Jun 30 21:00 ET = Jul 1 01:00 UTC
-  { id:'r32-7',  home_team_id:'mex', away_team_id:'ecu', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T01:00:00Z', venue:'Mexico City',            winnerAdvancesTo:'r16-4', winnerSlot:'home' },
-  // M80: Jul 1 12:00 ET = 16:00 UTC
-  { id:'r32-8',  home_team_id:'eng', away_team_id:'cod', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T16:00:00Z', venue:'Atlanta',                winnerAdvancesTo:'r16-4', winnerSlot:'away' },
-  // M81: Jul 1 20:00 ET = Jul 2 00:00 UTC
-  { id:'r32-9',  home_team_id:'usa', away_team_id:'bih', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T00:00:00Z', venue:'San Francisco Bay Area', winnerAdvancesTo:'r16-6', winnerSlot:'home' },
-  // M82: Jul 1 16:00 ET = 20:00 UTC
-  { id:'r32-10', home_team_id:'bel', away_team_id:'sen', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T20:00:00Z', venue:'Seattle',                winnerAdvancesTo:'r16-6', winnerSlot:'away' },
-  // M83: Jul 2 19:00 ET = 23:00 UTC
-  { id:'r32-11', home_team_id:'por', away_team_id:'cro', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T23:00:00Z', venue:'Toronto',                winnerAdvancesTo:'r16-5', winnerSlot:'home' },
-  // M84: Jul 2 15:00 ET = 19:00 UTC
-  { id:'r32-12', home_team_id:'esp', away_team_id:'aut', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T19:00:00Z', venue:'Los Angeles',            winnerAdvancesTo:'r16-5', winnerSlot:'away' },
-  // M85: Jul 2 23:00 ET = Jul 3 03:00 UTC
-  { id:'r32-13', home_team_id:'sui', away_team_id:'alg', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-03T03:00:00Z', venue:'Vancouver',              winnerAdvancesTo:'r16-8', winnerSlot:'home' },
-  // M86: Jul 3 14:00 ET = 18:00 UTC
-  { id:'r32-14', home_team_id:'arg', away_team_id:'cpv', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-03T18:00:00Z', venue:'Miami',                  winnerAdvancesTo:'r16-7', winnerSlot:'home' },
-  // M87: Jul 3 18:00 ET = 22:00 UTC
-  { id:'r32-15', home_team_id:'col', away_team_id:'gha', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-03T22:00:00Z', venue:'Kansas City',            winnerAdvancesTo:'r16-8', winnerSlot:'away' },
-  // M88: Jul 3 21:30 ET = Jul 4 01:30 UTC
-  { id:'r32-16', home_team_id:'aus', away_team_id:'egy', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-04T01:30:00Z', venue:'Dallas',                 winnerAdvancesTo:'r16-7', winnerSlot:'away' },
+  // ── Round of 32 — M73-M88 ─────────────────────────────────────────────────
+  // M73: RSA vs CAN  Jun 28 18:00 UTC  Los Angeles
+  { id:'m73', home_team_id:'rsa', away_team_id:'can', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-28T18:00:00Z', venue:'Los Angeles',
+    winnerAdvancesTo:{ fixture:'m90', slot:'home' } },
+  // M74: GER vs PAR  Jun 29 20:30 UTC  Boston
+  { id:'m74', home_team_id:'ger', away_team_id:'par', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-29T20:30:00Z', venue:'Boston',
+    winnerAdvancesTo:{ fixture:'m89', slot:'home' } },
+  // M75: NED vs MAR  Jun 30 01:00 UTC  Monterrey
+  { id:'m75', home_team_id:'ned', away_team_id:'mar', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T01:00:00Z', venue:'Monterrey',
+    winnerAdvancesTo:{ fixture:'m90', slot:'away' } },
+  // M76: BRA vs JPN  Jun 29 17:00 UTC  Houston
+  { id:'m76', home_team_id:'bra', away_team_id:'jpn', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-29T17:00:00Z', venue:'Houston',
+    winnerAdvancesTo:{ fixture:'m91', slot:'home' } },
+  // M77: FRA vs SWE  Jun 30 21:00 UTC  New Jersey
+  { id:'m77', home_team_id:'fra', away_team_id:'swe', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T21:00:00Z', venue:'New Jersey',
+    winnerAdvancesTo:{ fixture:'m89', slot:'away' } },
+  // M78: CIV vs NOR  Jun 30 17:00 UTC  Dallas
+  { id:'m78', home_team_id:'civ', away_team_id:'nor', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-06-30T17:00:00Z', venue:'Dallas',
+    winnerAdvancesTo:{ fixture:'m91', slot:'away' } },
+  // M79: MEX vs ECU  Jul 01 01:00 UTC  Mexico City
+  { id:'m79', home_team_id:'mex', away_team_id:'ecu', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T01:00:00Z', venue:'Mexico City',
+    winnerAdvancesTo:{ fixture:'m92', slot:'home' } },
+  // M80: ENG vs COD  Jul 01 16:00 UTC  Atlanta
+  { id:'m80', home_team_id:'eng', away_team_id:'cod', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T16:00:00Z', venue:'Atlanta',
+    winnerAdvancesTo:{ fixture:'m92', slot:'away' } },
+  // M81: USA vs BIH  Jul 02 00:00 UTC  San Francisco Bay Area
+  { id:'m81', home_team_id:'usa', away_team_id:'bih', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T00:00:00Z', venue:'San Francisco Bay Area',
+    winnerAdvancesTo:{ fixture:'m94', slot:'home' } },
+  // M82: BEL vs SEN  Jul 01 20:00 UTC  Seattle
+  { id:'m82', home_team_id:'bel', away_team_id:'sen', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-01T20:00:00Z', venue:'Seattle',
+    winnerAdvancesTo:{ fixture:'m94', slot:'away' } },
+  // M83: POR vs CRO  Jul 02 23:00 UTC  Toronto
+  { id:'m83', home_team_id:'por', away_team_id:'cro', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T23:00:00Z', venue:'Toronto',
+    winnerAdvancesTo:{ fixture:'m93', slot:'home' } },
+  // M84: ESP vs AUT  Jul 02 19:00 UTC  Los Angeles
+  { id:'m84', home_team_id:'esp', away_team_id:'aut', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-02T19:00:00Z', venue:'Los Angeles',
+    winnerAdvancesTo:{ fixture:'m93', slot:'away' } },
+  // M85: SUI vs ALG  Jul 03 03:00 UTC  Vancouver
+  { id:'m85', home_team_id:'sui', away_team_id:'alg', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-03T03:00:00Z', venue:'Vancouver',
+    winnerAdvancesTo:{ fixture:'m96', slot:'home' } },
+  // M86: ARG vs CPV  Jul 03 18:00 UTC  Miami
+  { id:'m86', home_team_id:'arg', away_team_id:'cpv', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-03T18:00:00Z', venue:'Miami',
+    winnerAdvancesTo:{ fixture:'m95', slot:'home' } },
+  // M87: COL vs GHA  Jul 03 22:00 UTC  Kansas City
+  { id:'m87', home_team_id:'col', away_team_id:'gha', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-03T22:00:00Z', venue:'Kansas City',
+    winnerAdvancesTo:{ fixture:'m96', slot:'away' } },
+  // M88: AUS vs EGY  Jul 04 01:30 UTC  Dallas
+  { id:'m88', home_team_id:'aus', away_team_id:'egy', group:null, stage:'r32', matchday:null, kickoff_utc:'2026-07-04T01:30:00Z', venue:'Dallas',
+    winnerAdvancesTo:{ fixture:'m95', slot:'away' } },
 
   // ── Round of 16 — M89-M96 ─────────────────────────────────────────────────
-  // M89: W74(GER/PAR) vs W77(FRA/SWE) — Jul 4 23:00 ET = Jul 5 03:00 UTC
-  { id:'r16-1', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-05T03:00:00Z', venue:'New Jersey',   homeSource:'W:r32-2', awaySource:'W:r32-5', winnerAdvancesTo:'qf-1', winnerSlot:'home' },
-  // M90: W73(RSA/CAN) vs W75(NED/MAR) — Jul 4 19:00 ET = 23:00 UTC
-  { id:'r16-2', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-04T23:00:00Z', venue:'Los Angeles',  homeSource:'W:r32-1', awaySource:'W:r32-3', winnerAdvancesTo:'qf-1', winnerSlot:'away' },
-  // M91: W76(BRA/JPN) vs W78(CIV/NOR) — Jul 5 22:00 ET = Jul 6 02:00 UTC
-  { id:'r16-3', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T02:00:00Z', venue:'Houston',      homeSource:'W:r32-4', awaySource:'W:r32-6', winnerAdvancesTo:'qf-3', winnerSlot:'home' },
-  // M92: W79(MEX/ECU) vs W80(ENG/COD) — Jul 6 ~02:00 ET = 06:00 UTC
-  { id:'r16-4', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T22:00:00Z', venue:'Seattle',      homeSource:'W:r32-7', awaySource:'W:r32-8', winnerAdvancesTo:'qf-3', winnerSlot:'away' },
-  // M93: W83(POR/CRO) vs W84(ESP/AUT) — Jul 6 21:00 ET = Jul 7 01:00 UTC
-  { id:'r16-5', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T01:00:00Z', venue:'Dallas',       homeSource:'W:r32-11', awaySource:'W:r32-12', winnerAdvancesTo:'qf-2', winnerSlot:'home' },
-  // M94: W81(USA/BIH) vs W82(BEL/SEN) — Jul 7 02:00 ET = 06:00 UTC
-  { id:'r16-6', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T06:00:00Z', venue:'Atlanta',      homeSource:'W:r32-9', awaySource:'W:r32-10', winnerAdvancesTo:'qf-2', winnerSlot:'away' },
-  // M95: W86(ARG/CPV) vs W88(AUS/EGY) — Jul 7 18:00 ET = 22:00 UTC
-  { id:'r16-7', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T22:00:00Z', venue:'Miami',        homeSource:'W:r32-14', awaySource:'W:r32-16', winnerAdvancesTo:'qf-4', winnerSlot:'home' },
-  // M96: W85(SUI/ALG) vs W87(COL/GHA) — Jul 7 22:00 ET = Jul 8 02:00 UTC
-  { id:'r16-8', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-08T02:00:00Z', venue:'Kansas City',  homeSource:'W:r32-13', awaySource:'W:r32-15', winnerAdvancesTo:'qf-4', winnerSlot:'away' },
+  // M89: W(M74) vs W(M77)  Jul 05 03:00 UTC  New Jersey
+  { id:'m89', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-05T03:00:00Z', venue:'New Jersey',
+    homeSource:{ fixture:'m74', type:'winner' }, awaySource:{ fixture:'m77', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m97', slot:'home' } },
+  // M90: W(M73) vs W(M75)  Jul 04 23:00 UTC  Los Angeles
+  { id:'m90', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-04T23:00:00Z', venue:'Los Angeles',
+    homeSource:{ fixture:'m73', type:'winner' }, awaySource:{ fixture:'m75', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m97', slot:'away' } },
+  // M91: W(M76) vs W(M78)  Jul 06 02:00 UTC  Houston
+  { id:'m91', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T02:00:00Z', venue:'Houston',
+    homeSource:{ fixture:'m76', type:'winner' }, awaySource:{ fixture:'m78', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m99', slot:'home' } },
+  // M92: W(M79) vs W(M80)  Jul 06 22:00 UTC  Seattle
+  { id:'m92', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T22:00:00Z', venue:'Seattle',
+    homeSource:{ fixture:'m79', type:'winner' }, awaySource:{ fixture:'m80', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m99', slot:'away' } },
+  // M93: W(M83) vs W(M84)  Jul 07 01:00 UTC  Dallas
+  { id:'m93', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T01:00:00Z', venue:'Dallas',
+    homeSource:{ fixture:'m83', type:'winner' }, awaySource:{ fixture:'m84', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m98', slot:'home' } },
+  // M94: W(M81) vs W(M82)  Jul 07 06:00 UTC  Atlanta
+  { id:'m94', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T06:00:00Z', venue:'Atlanta',
+    homeSource:{ fixture:'m81', type:'winner' }, awaySource:{ fixture:'m82', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m98', slot:'away' } },
+  // M95: W(M86) vs W(M88)  Jul 07 22:00 UTC  Miami
+  { id:'m95', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T22:00:00Z', venue:'Miami',
+    homeSource:{ fixture:'m86', type:'winner' }, awaySource:{ fixture:'m88', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m100', slot:'home' } },
+  // M96: W(M85) vs W(M87)  Jul 08 02:00 UTC  Kansas City
+  { id:'m96', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-08T02:00:00Z', venue:'Kansas City',
+    homeSource:{ fixture:'m85', type:'winner' }, awaySource:{ fixture:'m87', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m100', slot:'away' } },
 
   // ── Quarter-Finals — M97-M100 ─────────────────────────────────────────────
-  // M97: W89 vs W90 — Jul 9 22:00 ET = Jul 10 02:00 UTC
-  { id:'qf-1', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-10T02:00:00Z', venue:'New Jersey',  homeSource:'W:r16-1', awaySource:'W:r16-2', winnerAdvancesTo:'sf-1', winnerSlot:'home' },
-  // M98: W93 vs W94 — Jul 10 21:00 ET = Jul 11 01:00 UTC
-  { id:'qf-2', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-11T01:00:00Z', venue:'Dallas',       homeSource:'W:r16-5', awaySource:'W:r16-6', winnerAdvancesTo:'sf-2', winnerSlot:'home' },
-  // M99: W91 vs W92 — Jul 11 23:00 ET = Jul 12 03:00 UTC
-  { id:'qf-3', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-12T03:00:00Z', venue:'Los Angeles',  homeSource:'W:r16-3', awaySource:'W:r16-4', winnerAdvancesTo:'sf-1', winnerSlot:'away' },
-  // M100: W95 vs W96 — Jul 12 03:00 ET = 07:00 UTC
-  { id:'qf-4', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-12T22:00:00Z', venue:'Houston',      homeSource:'W:r16-7', awaySource:'W:r16-8', winnerAdvancesTo:'sf-2', winnerSlot:'away' },
+  // M97: W(M89) vs W(M90)  Jul 10 02:00 UTC  New Jersey
+  { id:'m97', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-10T02:00:00Z', venue:'New Jersey',
+    homeSource:{ fixture:'m89', type:'winner' }, awaySource:{ fixture:'m90', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m101', slot:'home' } },
+  // M98: W(M93) vs W(M94)  Jul 11 01:00 UTC  Dallas
+  { id:'m98', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-11T01:00:00Z', venue:'Dallas',
+    homeSource:{ fixture:'m93', type:'winner' }, awaySource:{ fixture:'m94', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m102', slot:'home' } },
+  // M99: W(M91) vs W(M92)  Jul 12 03:00 UTC  Los Angeles
+  { id:'m99', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-12T03:00:00Z', venue:'Los Angeles',
+    homeSource:{ fixture:'m91', type:'winner' }, awaySource:{ fixture:'m92', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m101', slot:'away' } },
+  // M100: W(M95) vs W(M96)  Jul 12 22:00 UTC  Houston
+  { id:'m100', home_team_id:'', away_team_id:'', group:null, stage:'qf', matchday:null, kickoff_utc:'2026-07-12T22:00:00Z', venue:'Houston',
+    homeSource:{ fixture:'m95', type:'winner' }, awaySource:{ fixture:'m96', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m102', slot:'away' } },
 
   // ── Semi-Finals — M101-M102 ───────────────────────────────────────────────
-  // M101: W97 vs W99 — Jul 14 21:00 ET = Jul 15 01:00 UTC
-  { id:'sf-1', home_team_id:'', away_team_id:'', group:null, stage:'sf', matchday:null, kickoff_utc:'2026-07-15T01:00:00Z', venue:'New Jersey', homeSource:'W:qf-1', awaySource:'W:qf-3', winnerAdvancesTo:'final', winnerSlot:'home', loserAdvancesTo:'third-place', loserSlot:'home' },
-  // M102: W98 vs W100 — Jul 15 21:00 ET = Jul 16 01:00 UTC
-  { id:'sf-2', home_team_id:'', away_team_id:'', group:null, stage:'sf', matchday:null, kickoff_utc:'2026-07-16T01:00:00Z', venue:'Dallas',     homeSource:'W:qf-2', awaySource:'W:qf-4', winnerAdvancesTo:'final', winnerSlot:'away', loserAdvancesTo:'third-place', loserSlot:'away' },
+  // M101: W(M97) vs W(M99)  Jul 15 01:00 UTC  New Jersey
+  { id:'m101', home_team_id:'', away_team_id:'', group:null, stage:'sf', matchday:null, kickoff_utc:'2026-07-15T01:00:00Z', venue:'New Jersey',
+    homeSource:{ fixture:'m97', type:'winner' }, awaySource:{ fixture:'m99', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m104', slot:'home' },
+    loserAdvancesTo: { fixture:'m103', slot:'home' } },
+  // M102: W(M98) vs W(M100)  Jul 16 01:00 UTC  Dallas
+  { id:'m102', home_team_id:'', away_team_id:'', group:null, stage:'sf', matchday:null, kickoff_utc:'2026-07-16T01:00:00Z', venue:'Dallas',
+    homeSource:{ fixture:'m98', type:'winner' }, awaySource:{ fixture:'m100', type:'winner' },
+    winnerAdvancesTo:{ fixture:'m104', slot:'away' },
+    loserAdvancesTo: { fixture:'m103', slot:'away' } },
 
   // ── Third-place — M103 ────────────────────────────────────────────────────
-  // Jul 18 23:00 ET = Jul 19 03:00 UTC
-  { id:'third-place', home_team_id:'', away_team_id:'', group:null, stage:'third_place', matchday:null, kickoff_utc:'2026-07-19T03:00:00Z', venue:'Miami',     homeSource:'L:sf-1', awaySource:'L:sf-2' },
+  // Jul 19 03:00 UTC  Miami
+  { id:'m103', home_team_id:'', away_team_id:'', group:null, stage:'third_place', matchday:null, kickoff_utc:'2026-07-19T03:00:00Z', venue:'Miami',
+    homeSource:{ fixture:'m101', type:'loser' }, awaySource:{ fixture:'m102', type:'loser' } },
 
   // ── Final — M104 ─────────────────────────────────────────────────────────
-  // Jul 19 21:00 ET = Jul 20 01:00 UTC
-  { id:'final', home_team_id:'', away_team_id:'', group:null, stage:'final', matchday:null, kickoff_utc:'2026-07-20T01:00:00Z', venue:'New Jersey', homeSource:'W:sf-1', awaySource:'W:sf-2' },
+  // Jul 20 01:00 UTC  New Jersey
+  { id:'m104', home_team_id:'', away_team_id:'', group:null, stage:'final', matchday:null, kickoff_utc:'2026-07-20T01:00:00Z', venue:'New Jersey',
+    homeSource:{ fixture:'m101', type:'winner' }, awaySource:{ fixture:'m102', type:'winner' } },
 ]
 
 // ─── Venue factors ────────────────────────────────────────────────────────────
