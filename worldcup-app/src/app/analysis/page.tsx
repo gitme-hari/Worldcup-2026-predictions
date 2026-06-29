@@ -1,4 +1,4 @@
-import { AnalysisPanel } from '@/components/analysis/analysis-panel'
+import { PerformancePanel } from '@/components/analysis/performance-panel'
 
 export default function AnalysisPage() {
   return (
@@ -6,10 +6,10 @@ export default function AnalysisPage() {
       <div>
         <h1 className="text-lg font-bold text-zinc-900">Performance</h1>
         <p className="text-xs text-zinc-500 mt-0.5">
-          Track your picks against actual results and review engine diagnostics.
+          Decision history, override intelligence, engine learning, and diagnostics.
         </p>
       </div>
-      <AnalysisPanel />
+      <PerformancePanel />
     </div>
   )
 }
