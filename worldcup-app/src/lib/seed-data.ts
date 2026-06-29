@@ -238,13 +238,13 @@ export const KNOCKOUT_FIXTURES: SeedFixture[] = [
   // M90: W73(RSA/CAN) vs W75(NED/MAR) — Jul 4 19:00 ET = 23:00 UTC
   { id:'r16-2', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-04T23:00:00Z', venue:'Los Angeles',  homeSource:'W:r32-1', awaySource:'W:r32-3', winnerAdvancesTo:'qf-1', winnerSlot:'away' },
   // M91: W76(BRA/JPN) vs W78(CIV/NOR) — Jul 5 22:00 ET = Jul 6 02:00 UTC
-  { id:'r16-3', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T02:00:00Z', venue:'Houston',      homeSource:'W:r32-4', awaySource:'W:r32-6', winnerAdvancesTo:'qf-2', winnerSlot:'home' },
+  { id:'r16-3', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T02:00:00Z', venue:'Houston',      homeSource:'W:r32-4', awaySource:'W:r32-6', winnerAdvancesTo:'qf-3', winnerSlot:'home' },
   // M92: W79(MEX/ECU) vs W80(ENG/COD) — Jul 6 ~02:00 ET = 06:00 UTC
-  { id:'r16-4', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T22:00:00Z', venue:'Seattle',      homeSource:'W:r32-7', awaySource:'W:r32-8', winnerAdvancesTo:'qf-2', winnerSlot:'away' },
+  { id:'r16-4', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-06T22:00:00Z', venue:'Seattle',      homeSource:'W:r32-7', awaySource:'W:r32-8', winnerAdvancesTo:'qf-3', winnerSlot:'away' },
   // M93: W83(POR/CRO) vs W84(ESP/AUT) — Jul 6 21:00 ET = Jul 7 01:00 UTC
-  { id:'r16-5', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T01:00:00Z', venue:'Dallas',       homeSource:'W:r32-11', awaySource:'W:r32-12', winnerAdvancesTo:'qf-3', winnerSlot:'home' },
+  { id:'r16-5', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T01:00:00Z', venue:'Dallas',       homeSource:'W:r32-11', awaySource:'W:r32-12', winnerAdvancesTo:'qf-2', winnerSlot:'home' },
   // M94: W81(USA/BIH) vs W82(BEL/SEN) — Jul 7 02:00 ET = 06:00 UTC
-  { id:'r16-6', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T06:00:00Z', venue:'Atlanta',      homeSource:'W:r32-9', awaySource:'W:r32-10', winnerAdvancesTo:'qf-3', winnerSlot:'away' },
+  { id:'r16-6', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T06:00:00Z', venue:'Atlanta',      homeSource:'W:r32-9', awaySource:'W:r32-10', winnerAdvancesTo:'qf-2', winnerSlot:'away' },
   // M95: W86(ARG/CPV) vs W88(AUS/EGY) — Jul 7 18:00 ET = 22:00 UTC
   { id:'r16-7', home_team_id:'', away_team_id:'', group:null, stage:'r16', matchday:null, kickoff_utc:'2026-07-07T22:00:00Z', venue:'Miami',        homeSource:'W:r32-14', awaySource:'W:r32-16', winnerAdvancesTo:'qf-4', winnerSlot:'home' },
   // M96: W85(SUI/ALG) vs W87(COL/GHA) — Jul 7 22:00 ET = Jul 8 02:00 UTC
