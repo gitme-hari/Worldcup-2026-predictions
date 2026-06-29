@@ -1,23 +1,24 @@
 'use client'
+import type { PerformanceData } from '../performance-data'
 import { ModelHealth } from '@/components/analysis/model-health'
 import { DisagreementAnalysis } from '@/components/analysis/disagreement-analysis'
 import { DecisionEngine } from '@/components/analysis/decision-engine'
-import { useMemo } from 'react'
-import { getFixtures, getTeams, getResults, computeCalibration } from '@/lib/store'
-import { getLockedPredictions, getPredictions } from '@/lib/store'
+import { getFixtures, getTeams, getResults, getLockedPredictions, getPredictions } from '@/lib/store'
 import { getOutcome } from '@/lib/models'
 import { MODEL_LABELS, MODEL_COLORS } from '@/lib/utils'
+import { useMemo } from 'react'
 
 const MODELS = ['A', 'B', 'C'] as const
 
-export function TabDiagnostics() {
-  const { leaderboard, calibration, comparisons } = useMemo(() => {
+export function TabDiagnostics({ data }: { data: PerformanceData }) {
+  const { calibration } = data
+
+  const leaderboard = useMemo(() => {
     const fixtures = getFixtures()
     const teams = getTeams()
     const results = getResults()
     const allPreds = getPredictions()
     const lockedPreds = getLockedPredictions()
-    const calibration = computeCalibration()
     const teamMap = Object.fromEntries(teams.map(t => [t.id, t]))
 
     const comparisons = results.flatMap(result => {
@@ -39,17 +40,10 @@ export function TabDiagnostics() {
         }]
       }))
 
-      return [{
-        fixtureId: fixture.id,
-        homeCode: home.code, awayCode: away.code,
-        date: fixture.kickoff_utc, group: fixture.group ?? '',
-        lockedModel: locked?.model ?? null,
-        actual: { home: result.home_goals, away: result.away_goals },
-        models,
-      }]
-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      return [{ fixtureId: fixture.id, lockedModel: locked?.model ?? null, models }]
+    })
 
-    const leaderboard = MODELS.map(m => {
+    return MODELS.map(m => {
       const entries = comparisons.map(c => c.models[m]).filter(Boolean)
       const correct = entries.filter(e => e!.outcomeCorrect).length
       return {
@@ -60,8 +54,6 @@ export function TabDiagnostics() {
         avgGoalErr: entries.length > 0 ? entries.reduce((s, e) => s + e!.goalErr, 0) / entries.length : 0,
       }
     }).sort((a, b) => b.accuracy - a.accuracy || a.avgGoalErr - b.avgGoalErr)
-
-    return { leaderboard, calibration, comparisons }
   }, [])
 
   const bestModel = leaderboard[0]?.accuracy > 0 ? leaderboard[0].model : null
@@ -72,7 +64,6 @@ export function TabDiagnostics() {
       <ModelHealth />
       <DisagreementAnalysis />
 
-      {/* Model leaderboard */}
       <div className="space-y-2">
         <p className="text-sm font-semibold text-zinc-700">Model Leaderboard</p>
         <p className="text-xs text-zinc-400">Outcome accuracy and goal error across all played matches.</p>
@@ -123,8 +114,8 @@ export function TabDiagnostics() {
           </table>
         </div>
         {bestModel && (
-          <p className="text-xs text-zinc-500 px-1">
-            Best performer: {MODEL_LABELS[bestModel]} — leading on accuracy across {comparisons.length} played matches.
+          <p className="text-xs text-zinc-500">
+            Best performer: {MODEL_LABELS[bestModel]} — leading on accuracy across {leaderboard[0].matches} played matches.
           </p>
         )}
       </div>
